@@ -1,6 +1,6 @@
-def pipeutils, pipecfg
 node {
     checkout scm
+    // these are script global vars
     pipeutils = load("utils.groovy")
     pipecfg = pipeutils.load_pipecfg()
 }
@@ -48,8 +48,8 @@ def region = "eastus"
 
 def s3_stream_dir = pipeutils.get_s3_streams_dir(pipecfg, params.STREAM)
 
-// Go with 1.5Gi here because we download/decompress/upload the image
-def cosa_memory_request_mb = 1536
+// Go with a higher memory request here because we download/decompress/upload the image
+def cosa_memory_request_mb = 1792
 
 
 timeout(time: 75, unit: 'MINUTES') {
@@ -74,7 +74,7 @@ timeout(time: 75, unit: 'MINUTES') {
                 cosa buildfetch --build=${params.VERSION} --arch=${params.ARCH} \
                     --url=s3://${s3_stream_dir}/builds --artifact=azure
                 """)
-                pipeutils.withXzMemLimit(cosa_memory_request_mb - 256) {
+                pipeutils.withXzMemLimit(cosa_memory_request_mb - 512) {
                     shwrap("cosa decompress --build=${params.VERSION} --artifact=azure")
                 }
                 azure_image_filepath = shwrapCapture("""
@@ -86,10 +86,8 @@ timeout(time: 75, unit: 'MINUTES') {
             azure_image_name = "kola-fedora-coreos-${params.STREAM}-${params.ARCH}.vhd"
         }
 
-        withCredentials([file(variable: 'AZURE_KOLA_TESTS_CONFIG_PROFILE',
-                              credentialsId: 'azure-kola-tests-config-profile'),
-                         file(variable: 'AZURE_KOLA_TESTS_CONFIG_AUTH',
-                              credentialsId: 'azure-kola-tests-config-auth')]) {
+        withCredentials([file(variable: 'AZURE_KOLA_TESTS_CONFIG',
+                              credentialsId: 'azure-kola-tests-config')]) {
 
             def azure_testing_resource_group = pipecfg.clouds?.azure?.test_resource_group
             def azure_testing_storage_account = pipecfg.clouds?.azure?.test_storage_account
@@ -100,14 +98,12 @@ timeout(time: 75, unit: 'MINUTES') {
                 shwrap("""
                 # First delete the blob/image since we re-use it.
                 ore azure delete-image --log-level=INFO                 \
-                    --azure-auth \${AZURE_KOLA_TESTS_CONFIG_AUTH}       \
-                    --azure-profile \${AZURE_KOLA_TESTS_CONFIG_PROFILE} \
+                    --azure-credentials \${AZURE_KOLA_TESTS_CONFIG}     \
                     --azure-location $region                            \
                     --resource-group ${azure_testing_resource_group}    \
                     --image-name ${azure_image_name}
                 ore azure delete-blob --log-level=INFO                  \
-                    --azure-auth \${AZURE_KOLA_TESTS_CONFIG_AUTH}       \
-                    --azure-profile \${AZURE_KOLA_TESTS_CONFIG_PROFILE} \
+                    --azure-credentials \${AZURE_KOLA_TESTS_CONFIG}     \
                     --azure-location $region                            \
                     --resource-group $azure_testing_resource_group      \
                     --storage-account $azure_testing_storage_account    \
@@ -115,8 +111,7 @@ timeout(time: 75, unit: 'MINUTES') {
                     --blob-name $azure_image_name
                 # Then create them fresh
                 ore azure upload-blob --log-level=INFO                  \
-                    --azure-auth \${AZURE_KOLA_TESTS_CONFIG_AUTH}       \
-                    --azure-profile \${AZURE_KOLA_TESTS_CONFIG_PROFILE} \
+                    --azure-credentials \${AZURE_KOLA_TESTS_CONFIG}     \
                     --azure-location $region                            \
                     --resource-group $azure_testing_resource_group      \
                     --storage-account $azure_testing_storage_account    \
@@ -124,8 +119,7 @@ timeout(time: 75, unit: 'MINUTES') {
                     --blob-name $azure_image_name                       \
                     --file ${azure_image_filepath}
                 ore azure create-image --log-level=INFO                 \
-                    --azure-auth \${AZURE_KOLA_TESTS_CONFIG_AUTH}       \
-                    --azure-profile \${AZURE_KOLA_TESTS_CONFIG_PROFILE} \
+                    --azure-credentials \${AZURE_KOLA_TESTS_CONFIG}     \
                     --resource-group $azure_testing_resource_group      \
                     --azure-location $region                            \
                     --image-name $azure_image_name                      \
@@ -136,14 +130,13 @@ timeout(time: 75, unit: 'MINUTES') {
             // Since we don't have permanent images uploaded to Azure we'll
             // skip the upgrade test.
             try {
-                def azure_subscription = shwrapCapture("jq -r .subscriptionId \${AZURE_KOLA_TESTS_CONFIG_AUTH}")
+                def azure_subscription = shwrapCapture("jq -r .subscription \${AZURE_KOLA_TESTS_CONFIG}")
                 kola(cosaDir: env.WORKSPACE, parallel: 10,
                      build: params.VERSION, arch: params.ARCH,
                      extraArgs: params.KOLA_TESTS,
                      skipUpgrade: true,
                      platformArgs: """-p=azure                               \
-                         --azure-auth \${AZURE_KOLA_TESTS_CONFIG_AUTH}       \
-                         --azure-profile \${AZURE_KOLA_TESTS_CONFIG_PROFILE} \
+                         --azure-credentials \${AZURE_KOLA_TESTS_CONFIG}     \
                          --azure-location $region                            \
                          --azure-disk-uri /subscriptions/${azure_subscription}/resourceGroups/${azure_testing_resource_group}/providers/Microsoft.Compute/images/${azure_image_name}""")
             } finally {
@@ -151,14 +144,12 @@ timeout(time: 75, unit: 'MINUTES') {
                     // Delete the image in Azure
                     shwrap("""
                     ore azure delete-image --log-level=INFO                 \
-                        --azure-auth \${AZURE_KOLA_TESTS_CONFIG_AUTH}       \
-                        --azure-profile \${AZURE_KOLA_TESTS_CONFIG_PROFILE} \
+                        --azure-credentials \${AZURE_KOLA_TESTS_CONFIG}     \
                         --azure-location $region                            \
                         --resource-group $azure_testing_resource_group      \
                         --image-name $azure_image_name
                     ore azure delete-blob --log-level=INFO                  \
-                        --azure-auth \${AZURE_KOLA_TESTS_CONFIG_AUTH}       \
-                        --azure-profile \${AZURE_KOLA_TESTS_CONFIG_PROFILE} \
+                        --azure-credentials \${AZURE_KOLA_TESTS_CONFIG}     \
                         --azure-location $region                            \
                         --resource-group $azure_testing_resource_group      \
                         --storage-account $azure_testing_storage_account    \
@@ -168,8 +159,7 @@ timeout(time: 75, unit: 'MINUTES') {
                 }, "Garbage Collection": {
                     shwrap("""
                     ore azure gc --log-level=INFO                           \
-                        --azure-auth \${AZURE_KOLA_TESTS_CONFIG_AUTH}       \
-                        --azure-profile \${AZURE_KOLA_TESTS_CONFIG_PROFILE} \
+                        --azure-credentials \${AZURE_KOLA_TESTS_CONFIG}     \
                         --azure-location $region
                     """)
                 }

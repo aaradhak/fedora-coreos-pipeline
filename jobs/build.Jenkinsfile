@@ -1,8 +1,8 @@
 import org.yaml.snakeyaml.Yaml;
 
-def pipeutils, pipecfg, uploading, libcloud
 node {
     checkout scm
+    // these are script global vars
     pipeutils = load("utils.groovy")
     pipecfg = pipeutils.load_pipecfg()
     libcloud = load("libcloud.groovy")
@@ -49,6 +49,9 @@ properties([
       booleanParam(name: 'NO_UPLOAD',
                    defaultValue: false,
                    description: 'Do not upload results to S3; for debugging purposes.'),
+      booleanParam(name: 'WAIT_FOR_RELEASE_JOB',
+                   defaultValue: false,
+                   description: 'Wait for the release job and propagate errors.'),
     ] + pipeutils.add_hotfix_parameters_if_supported()),
     buildDiscarder(logRotator(
         numToKeepStr: '100',
@@ -106,8 +109,20 @@ currentBuild.description = "${build_description} Waiting"
 // declare these early so we can use them in `finally` block
 def newBuildID, basearch
 
+// matches between build/build-arch job
+def timeout_mins = 240
+
+if (params.WAIT_FOR_RELEASE_JOB) {
+    // Waiting for the release job effectively means waiting for all the build-
+    // arch jobs we trigger to finish. While we do overlap in execution (by
+    // a lot when EARLY_ARCH_JOBS is set), let's just simplify and add its
+    // timeout value to ours to account for this. Add 30 minutes more for the
+    // release job itself.
+    timeout_mins += timeout_mins + 30
+}
+
 lock(resource: "build-${params.STREAM}") {
-    timeout(time: 240, unit: 'MINUTES') {
+    timeout(time: timeout_mins, unit: 'MINUTES') {
     cosaPod(cpu: "${ncpus}",
             memory: "${cosa_memory_request_mb}Mi",
             image: cosa_img,
@@ -126,10 +141,9 @@ lock(resource: "build-${params.STREAM}") {
 
         // Now, determine if we should do any uploads to remote s3 buckets or clouds
         // Don't upload if the user told us not to or we're debugging with KOLA_RUN_SLEEP
+        def uploading = false
         if (s3_stream_dir && (!params.NO_UPLOAD || params.KOLA_RUN_SLEEP)) {
             uploading = true
-        } else {
-            uploading = false
         }
 
         // add any additional root CA cert before we do anything that fetches
@@ -247,6 +261,32 @@ lock(resource: "build-${params.STREAM}") {
         if (prevBuildID == buildID) {
             currentBuild.result = 'SUCCESS'
             currentBuild.description = "${build_description} 💤 (no new build)"
+
+            // Nothing changed since the latest build. Check if it's missing
+            // some arches and retrigger `build-arch` only for the missing
+            // arches, and the follow-up `release` job. Match the exact src
+            // config commit that was used. But only do this if there isn't
+            // already outstanding work in progress for that build ID. Skip if
+            // not uploading since it's required for multi-arch.
+            if (uploading && !buildid_has_work_pending(buildID, additional_arches)) {
+                def builds = readJSON file: "builds/builds.json"
+                assert buildID == builds.builds[0].id
+                def missing_arches = additional_arches - builds.builds[0].arches
+                if (missing_arches) {
+                    def meta = readJSON(text: shwrapCapture("cosa meta --build=${buildID} --dump"))
+                    def rev = meta["coreos-assembler.config-gitrev"]
+                    currentBuild.description = "${build_description} 🔨 ${buildID}"
+                    // Run the mArch jobs and wait. We wait here because if they fail
+                    // we don't want to bother running the release job again since the
+                    // goal is to get a complete build.
+                    run_multiarch_jobs(missing_arches, rev, buildID, cosa_img, true)
+                    if (stream_info.type != "production") {
+                        run_release_job(buildID)
+                    }
+                }
+            }
+
+            // And we're done!
             return
         }
 
@@ -298,56 +338,10 @@ lock(resource: "build-${params.STREAM}") {
                  skipSecureBoot: pipecfg.hotfix?.skip_secureboot_tests_hack)
         }
 
-        // Define a closure for what to do when we want to fork off
-        // the multi-arch builds.
-        archive_ostree_and_fork_mArch_jobs = {
-            // If we are uploading results then let's do an early archive
-            // of just the OSTree. This has the desired side effect of
-            // reserving our build ID before we fork off multi-arch builds.
-            stage('Archive OSTree') {
-                if (uploading) {
-                    def acl = pipecfg.s3.acl ?: 'public-read'
-                    // run with --force here in case the previous run of the
-                    // pipeline died in between buildupload and bump_builds_json()
-                    pipeutils.shwrapWithAWSBuildUploadCredentials("""
-                    cosa buildupload --force --skip-builds-json --artifact=ostree \
-                        s3 --aws-config-file=\${AWS_BUILD_UPLOAD_CONFIG} \
-                        --acl=${acl} ${s3_stream_dir}/builds
-                    """)
-                    pipeutils.bump_builds_json(
-                        params.STREAM,
-                        newBuildID,
-                        basearch,
-                        s3_stream_dir,
-                        acl)
-                }
-            }
-
-            stage('Fork Multi-Arch Builds') {
-                if (uploading) {
-                    for (arch in additional_arches) {
-                        // We pass in FORCE=true here since if we got this far we know
-                        // we want to do a build even if the code tells us that there
-                        // are no apparent changes since the previous commit.
-                        build job: 'build-arch', wait: false, parameters: [
-                            booleanParam(name: 'FORCE', value: true),
-                            booleanParam(name: 'ALLOW_KOLA_UPGRADE_FAILURE', value: params.ALLOW_KOLA_UPGRADE_FAILURE),
-                            string(name: 'SRC_CONFIG_COMMIT', value: src_config_commit),
-                            string(name: 'COREOS_ASSEMBLER_IMAGE', value: cosa_img),
-                            string(name: 'STREAM', value: params.STREAM),
-                            string(name: 'VERSION', value: newBuildID),
-                            string(name: 'ARCH', value: arch),
-                            string(name: 'PIPECFG_HOTFIX_REPO', value: params.PIPECFG_HOTFIX_REPO),
-                            string(name: 'PIPECFG_HOTFIX_REF', value: params.PIPECFG_HOTFIX_REF)
-                        ]
-                    }
-                }
-            }
-        }
-
         // If desired let's go ahead and archive+fork the multi-arch jobs
-        if (params.EARLY_ARCH_JOBS) {
-            archive_ostree_and_fork_mArch_jobs.call()
+        if (params.EARLY_ARCH_JOBS && uploading) {
+            archive_ostree(newBuildID, basearch, s3_stream_dir)
+            run_multiarch_jobs(additional_arches, src_config_commit, newBuildID, cosa_img, false)
         }
 
         // Build the remaining artifacts
@@ -369,20 +363,6 @@ lock(resource: "build-${params.STREAM}") {
                 stage("Kola:TestISO") {
                     kolaTestIso(cosaDir: env.WORKSPACE, arch: basearch,
                                 skipSecureBoot: pipecfg.hotfix?.skip_secureboot_tests_hack)
-                    // For now we want to notify ourselves when a particular workaround is observed.
-                    // It won't fail the build, just give us information.
-                    // https://github.com/coreos/fedora-coreos-tracker/issues/1233
-                    // XXX: This relies on implementation details in kolatestIso(),
-                    //      but since this is a hack and probably short lived that's OK.
-                    // First check to make sure the files exist, then grep for the workaround.
-                    shwrap("cosa shell -- ls tmp/kolaTestIso-*/kola-testiso-uefi/insecure/{iso-live-login,iso-as-disk}/console.txt")
-                    def grepRc = shwrapRc("""
-                         cosa shell -- grep 'tracker issue workaround engaged for .*issues/1233' \
-                            tmp/kolaTestIso-*/kola-testiso-uefi/insecure/{iso-live-login,iso-as-disk}/console.txt
-                    """)
-                    if (grepRc == 0) {
-                        warn("Detected used workaround for #1233")
-                    }
                 }
             }
         }
@@ -397,8 +377,9 @@ lock(resource: "build-${params.STREAM}") {
 
         // If we didn't do an early archive and start multi-arch
         // jobs let's go ahead and do those pieces now
-        if (!params.EARLY_ARCH_JOBS) {
-            archive_ostree_and_fork_mArch_jobs.call()
+        if (!params.EARLY_ARCH_JOBS && uploading) {
+            archive_ostree(newBuildID, basearch, s3_stream_dir)
+            run_multiarch_jobs(additional_arches, src_config_commit, newBuildID, cosa_img, false)
         }
 
         stage('Archive') {
@@ -459,22 +440,8 @@ lock(resource: "build-${params.STREAM}") {
 
         // For now, we auto-release all non-production streams builds. That
         // way, we can e.g. test testing-devel AMIs easily.
-        //
-        // Since we are only running this stage for non-production (i.e. mechanical
-        // and development) builds we'll default to not doing AWS AMI replication.
-        // We'll also default to allowing failures for additonal architectures.
         if (uploading && stream_info.type != "production") {
-            stage('Publish') {
-                build job: 'release', wait: false, parameters: [
-                    string(name: 'STREAM', value: params.STREAM),
-                    string(name: 'ADDITIONAL_ARCHES', value: params.ADDITIONAL_ARCHES),
-                    string(name: 'VERSION', value: newBuildID),
-                    booleanParam(name: 'ALLOW_MISSING_ARCHES', value: true),
-                    booleanParam(name: 'CLOUD_REPLICATION', value: params.CLOUD_REPLICATION),
-                    string(name: 'PIPECFG_HOTFIX_REPO', value: params.PIPECFG_HOTFIX_REPO),
-                    string(name: 'PIPECFG_HOTFIX_REF', value: params.PIPECFG_HOTFIX_REF)
-                ]
-            }
+            run_release_job(newBuildID)
         }
 
         currentBuild.result = 'SUCCESS'
@@ -517,3 +484,73 @@ lock(resource: "build-${params.STREAM}") {
         """)
     }
 }}}} // finally, cosaPod, timeout, and locks finish here
+
+// This does an early archive of just the OSTree. This has the desired side
+// effect of reserving our build ID before we fork off multi-arch builds.
+def archive_ostree(version, basearch, s3_stream_dir) {
+    stage('Archive OSTree') {
+        def acl = pipecfg.s3.acl ?: 'public-read'
+        // run with --force here in case the previous run of the
+        // pipeline died in between buildupload and bump_builds_json()
+        pipeutils.shwrapWithAWSBuildUploadCredentials("""
+        cosa buildupload --force --skip-builds-json --artifact=ostree \
+            s3 --aws-config-file=\${AWS_BUILD_UPLOAD_CONFIG} \
+            --acl=${acl} ${s3_stream_dir}/builds
+        """)
+        pipeutils.bump_builds_json(
+            params.STREAM,
+            version,
+            basearch,
+            s3_stream_dir,
+            acl)
+    }
+}
+
+def run_multiarch_jobs(arches, src_commit, version, cosa_img, wait) {
+    stage('Fork Multi-Arch Builds') {
+        parallel arches.collectEntries{arch -> [arch, {
+            // We pass in FORCE=true here since if we got this far we know
+            // we want to do a build even if the code tells us that there
+            // are no apparent changes since the previous commit.
+            build job: 'build-arch', wait: wait, parameters: [
+                booleanParam(name: 'FORCE', value: true),
+                booleanParam(name: 'ALLOW_KOLA_UPGRADE_FAILURE', value: params.ALLOW_KOLA_UPGRADE_FAILURE),
+                string(name: 'SRC_CONFIG_COMMIT', value: src_commit),
+                string(name: 'COREOS_ASSEMBLER_IMAGE', value: cosa_img),
+                string(name: 'STREAM', value: params.STREAM),
+                string(name: 'VERSION', value: version),
+                string(name: 'ARCH', value: arch),
+                string(name: 'PIPECFG_HOTFIX_REPO', value: params.PIPECFG_HOTFIX_REPO),
+                string(name: 'PIPECFG_HOTFIX_REF', value: params.PIPECFG_HOTFIX_REF)
+            ]
+        }]}
+    }
+}
+
+def run_release_job(buildID) {
+    stage('Publish') {
+        // Since we are only running this stage for non-production (i.e.
+        // mechanical and development) builds we'll default to allowing failures
+        // for additional architectures.
+        build job: 'release', wait: params.WAIT_FOR_RELEASE_JOB, parameters: [
+            string(name: 'STREAM', value: params.STREAM),
+            string(name: 'ADDITIONAL_ARCHES', value: params.ADDITIONAL_ARCHES),
+            string(name: 'VERSION', value: buildID),
+            booleanParam(name: 'ALLOW_MISSING_ARCHES', value: true),
+            booleanParam(name: 'CLOUD_REPLICATION', value: params.CLOUD_REPLICATION),
+            string(name: 'PIPECFG_HOTFIX_REPO', value: params.PIPECFG_HOTFIX_REPO),
+            string(name: 'PIPECFG_HOTFIX_REF', value: params.PIPECFG_HOTFIX_REF)
+        ]
+    }
+}
+
+def buildid_has_work_pending(buildID, arches) {
+    def locked = true
+    // these locks match the ones in the release job 
+    def locks = arches.collect{[resource: "release-${buildID}-${it}"]}
+    lock(resource: "release-${params.STREAM}", extra: locks, skipIfLocked: true) {
+        // NB: `return` here wouldn't actually return from the function
+        locked = false
+    }
+    return locked
+}

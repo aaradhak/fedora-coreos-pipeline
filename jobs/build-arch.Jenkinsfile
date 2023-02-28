@@ -1,8 +1,8 @@
 import org.yaml.snakeyaml.Yaml;
 
-def pipeutils, pipecfg, uploading, libcloud
 node {
     checkout scm
+    // these are script global vars
     pipeutils = load("utils.groovy")
     pipecfg = pipeutils.load_pipecfg()
     libcloud = load("libcloud.groovy")
@@ -74,6 +74,9 @@ assert params.VERSION != ""
 def newBuildID = params.VERSION
 def basearch = params.ARCH
 
+// matches between build/build-arch job
+def timeout_mins = 240
+
 // release lock: we want to block the release job until we're done.
 // ideally we'd lock this from the main pipeline and have lock ownership
 // transferred to us when we're triggered. in practice, it's very unlikely the
@@ -82,7 +85,7 @@ lock(resource: "release-${params.VERSION}-${basearch}") {
 // build lock: we don't want multiple concurrent builds for the same stream and
 // arch (though this should work fine in theory)
 lock(resource: "build-${params.STREAM}-${basearch}") {
-    timeout(time: 240, unit: 'MINUTES') {
+    timeout(time: timeout_mins, unit: 'MINUTES') {
     cosaPod(cpu: "${ncpus}",
             memory: "${cosa_memory_request_mb}Mi",
             image: cosa_controller_img,
@@ -100,10 +103,9 @@ lock(resource: "build-${params.STREAM}-${basearch}") {
 
         // Now, determine if we should do any uploads to remote s3 buckets or clouds
         // Don't upload if the user told us not to or we're debugging with KOLA_RUN_SLEEP
+        def uploading = false
         if (s3_stream_dir && (!params.NO_UPLOAD || params.KOLA_RUN_SLEEP)) {
             uploading = true
-        } else {
-            uploading = false
         }
 
         // Wrap a bunch of commands now inside the context of a remote
