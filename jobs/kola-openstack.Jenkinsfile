@@ -54,10 +54,10 @@ def cosa_memory_request_mb = 1792
 
 // Locking so we only run max of 2 runs (1 x86_64 and 1 aarch64) at any given time.
 lock(resource: "kola-openstack-${params.ARCH}") {
-    timeout(time: 90, unit: 'MINUTES') {
     cosaPod(memory: "${cosa_memory_request_mb}Mi", kvm: false,
             image: params.COREOS_ASSEMBLER_IMAGE,
             serviceAccount: "jenkins") {
+    timeout(time: 90, unit: 'MINUTES') {
     try {
 
         def openstack_image_name, openstack_image_filepath
@@ -73,7 +73,7 @@ lock(resource: "kola-openstack-${params.ARCH}") {
                 def variant = stream_info.variant ? "--variant ${stream_info.variant}" : ""
                 shwrap("""
                 cosa init --branch ${ref} ${commitopt} ${variant} ${pipecfg.source_config.url}
-                cosa buildfetch --build=${params.VERSION} --arch=${params.ARCH} \
+                time -v cosa buildfetch --build=${params.VERSION} --arch=${params.ARCH} \
                     --url=s3://${s3_stream_dir}/builds --artifact=openstack
                 """)
                 pipeutils.withXzMemLimit(cosa_memory_request_mb - 512) {

@@ -45,10 +45,10 @@ def s3_stream_dir = pipeutils.get_s3_streams_dir(pipecfg, params.STREAM)
 
 def stream_info = pipecfg.streams[params.STREAM]
 
-timeout(time: 30, unit: 'MINUTES') {
-    cosaPod(memory: "512Mi", kvm: false,
-            image: params.COREOS_ASSEMBLER_IMAGE,
-            serviceAccount: "jenkins") {
+cosaPod(memory: "512Mi", kvm: false,
+        image: params.COREOS_ASSEMBLER_IMAGE,
+        serviceAccount: "jenkins") {
+    timeout(time: 30, unit: 'MINUTES') {
     try {
 
         stage('Fetch Metadata') {
@@ -62,7 +62,7 @@ timeout(time: 30, unit: 'MINUTES') {
                 def variant = stream_info.variant ? "--variant ${stream_info.variant}" : ""
                 shwrap("""
                 cosa init --branch ${ref} ${commitopt} ${variant} ${pipecfg.source_config.url}
-                cosa buildfetch --artifact=ostree --build=${params.VERSION} \
+                time -v cosa buildfetch --artifact=ostree --build=${params.VERSION} \
                     --arch=${params.ARCH} --url=s3://${s3_stream_dir}/builds
                 """)
             }

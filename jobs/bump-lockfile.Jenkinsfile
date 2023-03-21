@@ -63,10 +63,10 @@ def cosa_memory_request_mb = 10.5 * 1024 as Integer
 def ncpus = ((cosa_memory_request_mb - 512) / 1536) as Integer
 
 lock(resource: "bump-${params.STREAM}") {
-    timeout(time: 120, unit: 'MINUTES') { 
     cosaPod(image: cosa_img,
             cpu: "${ncpus}", memory: "${cosa_memory_request_mb}Mi",
             serviceAccount: "jenkins") {
+    timeout(time: 120, unit: 'MINUTES') { 
     try {
 
         currentBuild.description = "[${params.STREAM}] Running"
@@ -83,7 +83,7 @@ lock(resource: "bump-${params.STREAM}") {
         def branch = params.STREAM
         def forceTimestamp = false
         def haveChanges = false
-        def src_config_commit = shwrapCapture("git ls-remote https://github.com/${repo} ${branch} | cut -d \$'\t' -f 1")
+        def src_config_commit = shwrapCapture("git ls-remote https://github.com/${repo} refs/heads/${branch} | cut -d \$'\t' -f 1")
         def variant = stream_info.variant ? "--variant ${stream_info.variant}" : ""
         shwrap("cosa init --branch ${branch} ${variant} --commit=${src_config_commit} https://github.com/${repo}")
 

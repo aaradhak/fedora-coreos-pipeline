@@ -122,11 +122,11 @@ if (params.WAIT_FOR_RELEASE_JOB) {
 }
 
 lock(resource: "build-${params.STREAM}") {
-    timeout(time: timeout_mins, unit: 'MINUTES') {
     cosaPod(cpu: "${ncpus}",
             memory: "${cosa_memory_request_mb}Mi",
             image: cosa_img,
             serviceAccount: "jenkins") {
+    timeout(time: timeout_mins, unit: 'MINUTES') {
     try {
 
         basearch = shwrapCapture("cosa basearch")
@@ -150,7 +150,7 @@ lock(resource: "build-${params.STREAM}") {
         pipeutils.addOptionalRootCA()
 
         def ref = pipeutils.get_source_config_ref_for_stream(pipecfg, params.STREAM)
-        def src_config_commit = shwrapCapture("git ls-remote ${pipecfg.source_config.url} ${ref} | cut -d \$'\t' -f 1")
+        def src_config_commit = shwrapCapture("git ls-remote ${pipecfg.source_config.url} refs/heads/${ref} | cut -d \$'\t' -f 1")
 
         stage('Init') {
             def yumrepos = pipecfg.source_config.yumrepos ? "--yumrepos ${pipecfg.source_config.yumrepos}" : ""
@@ -369,7 +369,7 @@ lock(resource: "build-${params.STREAM}") {
 
         // Upload to relevant clouds
         // XXX: we don't support cloud uploads yet for hotfixes
-        if (uploading && !pipecfg.hotfix) {
+        if (uploading && !pipecfg.hotfix && !stream_info.skip_cloud_uploads) {
             stage('Cloud Upload') {
                 libcloud.upload_to_clouds(pipecfg, basearch, newBuildID, params.STREAM)
             }
