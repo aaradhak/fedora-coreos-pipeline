@@ -140,3 +140,43 @@ lock(resource: "build-${params.STREAM}-${basearch}") {
             """)
         }
 
+        currentBuild.result = 'SUCCESS'
+
+} catch (e) {
+    currentBuild.result = 'FAILURE'
+    throw e
+} finally {
+    def color
+    def stream = params.STREAM
+    if (pipecfg.hotfix) {
+        stream += "-${pipecfg.hotfix.name}"
+    }
+    def message = "[${stream}][${basearch}] <${env.BUILD_URL}|${env.BUILD_NUMBER}>"
+
+    if (currentBuild.result == 'SUCCESS') {
+        if (!newBuildID) {
+            // SUCCESS, but no new builds? Must've been a no-op
+            return
+        }
+        message = ":sparkles: ${message}"
+    } else if (currentBuild.result == 'UNSTABLE') {
+        message = ":warning: ${message}"
+    } else {
+        message = ":fire: ${message}"
+    }
+
+    if (newBuildID) {
+        message = "${message} (${newBuildID})"
+    }
+
+    echo message
+    pipeutils.trySlackSend(message: message)
+    pipeutils.tryWithMessagingCredentials() {
+        shwrap("""
+        /usr/lib/coreos-assembler/fedmsg-broadcast --fedmsg-conf=\${FEDORA_MESSAGING_CONF} \
+            build.state.change --build ${newBuildID} --basearch ${basearch} --stream ${params.STREAM} \
+            --build-dir ${BUILDS_BASE_HTTP_URL}/${params.STREAM}/builds/${newBuildID}/${basearch} \
+            --state FINISHED --result ${currentBuild.result}
+        """)
+    }
+}}}}} // finally, cosaPod, timeout, and locks finish here
