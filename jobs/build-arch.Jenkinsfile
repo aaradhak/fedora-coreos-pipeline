@@ -27,7 +27,7 @@ properties([
              trim: true),
       string(name: 'TIMEOUT',
              description: 'Timeout value',
-             defaultValue: "4h",
+             defaultValue: "1h",
              trim: true),             
 
     ]),
