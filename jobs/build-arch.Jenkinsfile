@@ -144,10 +144,7 @@ lock(resource: "build-${params.STREAM}-${basearch}") {
 
 } 
 
-catch (e) {
-    currentBuild.result = 'FAILURE'
-    throw e
-} finally {
+finally {
     def color
     def stream = params.STREAM
     if (pipecfg.hotfix) {
