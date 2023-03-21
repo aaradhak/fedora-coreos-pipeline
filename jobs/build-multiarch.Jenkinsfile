@@ -62,7 +62,7 @@ def strict_build_param = stream_info.type == "mechanical" ? "" : "--strict"
 // --remote so we shouldn't need much memory.
 def cosa_memory_request_mb = 2.5 * 1024 as Integer
 
-// the build-arch pod is mostly triggering the work on a remote node, so we
+// the build-multiarch pod is mostly triggering the work on a remote node, so we
 // can be conservative with our request
 def ncpus = 1
 
