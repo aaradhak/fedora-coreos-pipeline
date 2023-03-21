@@ -140,8 +140,6 @@ lock(resource: "build-${params.STREAM}-${basearch}") {
             """)
         }
 
-        currentBuild.result = 'SUCCESS'
-
 } catch (e) {
     currentBuild.result = 'FAILURE'
     throw e
