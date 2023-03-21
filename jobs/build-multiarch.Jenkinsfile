@@ -138,5 +138,5 @@ lock(resource: "build-${params.STREAM}-${basearch}") {
             cosa init --force --branch ${ref} --commit=${src_config_commit} ${yumrepos} ${variant} ${pipecfg.source_config.url}
             """)
         }
-
- 
+        
+}
