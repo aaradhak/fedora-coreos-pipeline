@@ -140,7 +140,7 @@ lock(resource: "build-${params.STREAM}-${basearch}") {
         }
         currentBuild.result = 'SUCCESS'
 
-} catch (e) {
+}}}}} catch (e) {
     currentBuild.result = 'FAILURE'
     throw e
 } finally {
@@ -177,5 +177,5 @@ lock(resource: "build-${params.STREAM}-${basearch}") {
             --state FINISHED --result ${currentBuild.result}
         """)
     }
-}}}}} // finally, cosaPod, timeout, and locks finish here
+} // finally, cosaPod, timeout, and locks finish here
 
