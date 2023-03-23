@@ -62,7 +62,7 @@ def strict_build_param = stream_info.type == "mechanical" ? "" : "--strict"
 // --remote so we shouldn't need much memory.
 def cosa_memory_request_mb = 2.5 * 1024 as Integer
 
-// the build-multiarch pod is mostly triggering the work on a remote node, so we
+// the build-arch pod is mostly triggering the work on a remote node, so we
 // can be conservative with our request
 def ncpus = 1
 
@@ -90,6 +90,7 @@ lock(resource: "build-${params.STREAM}-${basearch}") {
             image: cosa_controller_img,
             serviceAccount: "jenkins") {
     timeout(time: timeout_mins, unit: 'MINUTES') {
+    try {
 
         currentBuild.description = "${build_description} Running"
 
@@ -138,11 +139,13 @@ lock(resource: "build-${params.STREAM}-${basearch}") {
             cosa init --force --branch ${ref} --commit=${src_config_commit} ${yumrepos} ${variant} ${pipecfg.source_config.url}
             """)
         }
+
+        } // end withEnv
+        } // end withPodmanRemoteArchBuilder
         currentBuild.result = 'SUCCESS'
 
 } catch (e) {
     currentBuild.result = 'FAILURE'
     throw e
 } 
-}}}}} // finally, cosaPod, timeout, and locks finish here
-
+}}}}
