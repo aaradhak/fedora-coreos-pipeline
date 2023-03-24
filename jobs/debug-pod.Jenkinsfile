@@ -144,7 +144,10 @@ lock(resource: "build-${params.STREAM}-${basearch}") {
 
         stage('Create Debug Session') {
             shwrap("""
-            # create a new tmux session named "debug-pod" with two panes
+            # Set SHELL=/bin/sh because inside OpenShift the user has /sbin/nologin
+            # as the shell in /etc/passwd.
+            # create a new tmux session named "debug-pod" with two panes. 
+            export SHELL=/bin/sh
             tmux new-session -s "debug-pod" -d "bash"';' split-window "bash"';' detach || :
             # sleep to give the bash shells a moment to start before
             # we start sending keystrokes. If we don't sleep we'll get
