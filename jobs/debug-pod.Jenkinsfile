@@ -144,7 +144,7 @@ lock(resource: "build-${params.STREAM}-${basearch}") {
         stage('Create Debug Session') {
             shwrap("""
             # create a new tmux session named "debug-pod" with two panes
-            tmux new-session -s "debug-pod" "bash"';' split-window "bash"';' detach
+            tmux new-session -s "debug-pod" -d "bash"';' split-window "bash"';' detach
             # sleep to give the bash shells a moment to start before
             # we start sending keystrokes. If we don't sleep we'll get
             # the keystrokes twice on the screen, which is ugly.
