@@ -17,11 +17,9 @@ properties([
       choice(name: 'STREAM',
              choices: pipeutils.get_streams_choices(pipecfg),
              description: 'CoreOS stream to build'),
-      string(name: 'ARCH',
+      choice(name: 'ARCH',
              description: 'The target architecture',
-             choices: pipeutils.get_supported_additional_arches(),
-             defaultValue: "s390x",
-             trim: true),
+             choices: pipeutils.get_supported_additional_arches()),
       string(name: 'COREOS_ASSEMBLER_IMAGE',
              description: 'Override coreos-assembler image to use',
              defaultValue: "",
@@ -55,6 +53,7 @@ def stream_info = pipecfg.streams[params.STREAM]
 
 def cosa_controller_img = stream_info.cosa_controller_img_hack ?: cosa_img
 cosa_controller_img = 'quay.io/dustymabe/coreos-assembler-staging:cosa-tmux'
+// DELETE ^^
 
 // If we are a mechanical stream then we can pin packages but we
 // don't maintain complete lockfiles so we can't build in strict mode.
@@ -62,7 +61,7 @@ def strict_build_param = stream_info.type == "mechanical" ? "" : "--strict"
 
 // Note that the heavy lifting is done on a remote node via podman
 // --remote so we shouldn't need much memory.
-def cosa_memory_request_mb = 2.5 * 1024 as Integer
+def cosa_memory_request_mb = 512
 
 // the build-arch pod is mostly triggering the work on a remote node, so we
 // can be conservative with our request
