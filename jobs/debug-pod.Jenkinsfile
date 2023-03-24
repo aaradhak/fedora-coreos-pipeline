@@ -146,25 +146,24 @@ lock(resource: "build-${params.STREAM}-${basearch}") {
             shwrap("""
             # Set SHELL=/bin/sh because inside OpenShift the user has /sbin/nologin
             # as the shell in /etc/passwd.
-            # create a new tmux session named "debug-pod" with two panes. 
+            # create a new tmux session with two panes. 
             export SHELL=/bin/sh
-            tmux new-session -s "debug-pod" -d "bash"';' split-window "bash"';' detach || :
+            tmux new-session -d "bash"';' split-window "bash"';' detach || :
             # sleep to give the bash shells a moment to start before
             # we start sending keystrokes. If we don't sleep we'll get
             # the keystrokes twice on the screen, which is ugly.
             sleep 2
             # In the top pane ssh into the builder (allows running podman directly)
             # In the bottom pane get a COSA shell into the COSA container on the remote
-            tmux attach-session -t "debug-pod"';'                                                          \
-                send-keys -t 0 "# This is an SSH shell on the remote builder" Enter';'                     \
-                send-keys -t 0 "# You can inpect running containers with 'podman ps'" Enter';'             \
-                send-keys -t 0 "# To directly enter the created container type:" Enter';'                  \
-                send-keys -t 0 "#     podman exec -it \${COREOS_ASSEMBLER_REMOTE_SESSION:0:7} bash" Enter';'\
-                send-keys -t 0 "ssh -i ${CONTAINER_SSHKEY} ${REMOTEUSER}@${REMOTEHOST}" Enter';'           \
-                send-keys -t 1 "# This is a COSA shell in the remote session" Enter';'                     \
-                send-keys -t 1 "cosa shell" Enter';'                                                       \
-                send-keys -t 1 "arch" Enter';'                                                             \
-                detach || :
+            tmux                                                                                             \
+                send-keys -t 0.0 "# This is an SSH shell on the remote builder" Enter';'                     \
+                send-keys -t 0.0 "# You can inpect running containers with 'podman ps'" Enter';'             \
+                send-keys -t 0.0 "# To directly enter the created container type:" Enter';'                  \
+                send-keys -t 0.0 "#    podman exec -it \${COREOS_ASSEMBLER_REMOTE_SESSION:0:7} bash" Enter';'\
+                send-keys -t 0.0 "ssh -i ${CONTAINER_SSHKEY} ${REMOTEUSER}@${REMOTEHOST}" Enter';'           \
+                send-keys -t 0.1 "# This is a COSA shell in the remote session" Enter';'                     \
+                send-keys -t 0.1 "cosa shell" Enter';'                                                       \
+                send-keys -t 0.1 "arch" Enter';'
             """)
         }
         
