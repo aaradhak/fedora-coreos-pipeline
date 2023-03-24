@@ -154,7 +154,7 @@ lock(resource: "build-${params.STREAM}-${basearch}") {
                 send-keys -t 0 "# This is an SSH shell on the remote builder" Enter';'                     \
                 send-keys -t 0 "# You can inpect running containers with 'podman ps'" Enter';'             \
                 send-keys -t 0 "# To directly enter the created container type:" Enter';'                  \
-                send-keys -t 0 "#     podman exec -it ${COREOS_ASSEMBLER_REMOTE_SESSION:0:7} bash" Enter';'\
+                send-keys -t 0 "#     podman exec -it \${COREOS_ASSEMBLER_REMOTE_SESSION:0:7} bash" Enter';'\
                 send-keys -t 0 "ssh -i ${CONTAINER_SSHKEY} ${REMOTEUSER}@${REMOTEHOST}" Enter';'           \
                 send-keys -t 1 "# This is a COSA shell in the remote session" Enter';'                     \
                 send-keys -t 1 "cosa shell" Enter';'                                                       \
