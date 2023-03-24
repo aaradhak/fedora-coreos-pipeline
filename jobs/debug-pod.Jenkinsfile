@@ -20,6 +20,7 @@ properties([
       string(name: 'ARCH',
              description: 'The target architecture',
              choices: pipeutils.get_supported_additional_arches(),
+             defaultValue: "s390x",
              trim: true),
       string(name: 'COREOS_ASSEMBLER_IMAGE',
              description: 'Override coreos-assembler image to use',
@@ -160,7 +161,7 @@ lock(resource: "build-${params.STREAM}-${basearch}") {
                 send-keys -t 1 "# This is a COSA shell in the remote session" Enter';'                     \
                 send-keys -t 1 "cosa shell" Enter';'                                                       \
                 send-keys -t 1 "arch" Enter';'                                                             \
-                detach
+                detach || :
             """)
         }
         
