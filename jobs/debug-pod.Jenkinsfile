@@ -53,7 +53,7 @@ cosa_img = cosa_img ?: pipeutils.get_cosa_img(pipecfg, params.STREAM)
 def stream_info = pipecfg.streams[params.STREAM]
 
 def cosa_controller_img = stream_info.cosa_controller_img_hack ?: cosa_img
-def cosa_controller_img = 'quay.io/dustymabe/coreos-assembler-staging:cosa-tmux'
+cosa_controller_img = 'quay.io/dustymabe/coreos-assembler-staging:cosa-tmux'
 
 // If we are a mechanical stream then we can pin packages but we
 // don't maintain complete lockfiles so we can't build in strict mode.
