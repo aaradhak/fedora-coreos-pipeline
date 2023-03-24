@@ -115,7 +115,7 @@ lock(resource: "build-${params.STREAM}-${basearch}") {
         // that `podman --remote` will transparently pick up and use.
         // We set the session to time out after 4h. This essentially
         // performs garbage collection on the remote if we fail to clean up.
-        pipeutils.withPodmanRemoteArchBuilder(arch: basearch) {
+        pipeutils.withPodmanRemoteArchBuilder(arch: params.ARCH) {
         def session = shwrapCapture("""
         cosa remote-session create --image ${cosa_img} --expiration 4h --workdir ${env.WORKSPACE}
         """)
