@@ -33,6 +33,11 @@ splunk-devops:1.10.1
 antisamy-markup-formatter:162.v0e6ec0fcfcf6
 jms-messaging:1.1.27
 
+# depedency plugins list:
+json-path-api:2.9.0-58.v62e3e85b_a_655
+github-branch-source:1797.v86fdb_4d57d43
+jackson2-api:2.17.0-379.v02de8ec9f64c
+
 # The below list are plugins that are also in base-plugins.txt but for
 # some reason or other we need to temporarily freeze or fast-track.
 #
