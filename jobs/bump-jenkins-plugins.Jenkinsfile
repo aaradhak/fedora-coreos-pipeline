@@ -13,7 +13,7 @@ It also opens a pull request with the updated plugin versions. */
 repo = "coreos/fedora-coreos-pipeline"
 fork_repo = "coreosbot-releng/fedora-coreos-pipeline"
 botCreds = "github-coreosbot-releng-token-username-password"
-pr_branch = "JenkinsPluginsUpdate"
+pr_branch = "JenkinsPluginsUpdateTestBase"
 
 /* Function to extract the plugin version from the plugin URL */
 def getVersionFromPluginUrl(pluginUrl) {
@@ -32,7 +32,7 @@ def getVersionFromPluginUrl(pluginUrl) {
 node {
     checkout scm: [
         $class: 'GitSCM',
-        branches: [[name: "main"]],
+        branches: [[name: "baseplugins"]],
         userRemoteConfigs: [[url: "https://github.com/${fork_repo}.git"]],
         extensions: [[$class: 'WipeWorkspace']]
     ]
@@ -63,7 +63,7 @@ node {
         stage("Read plugins.txt") {
             /* Clone the repository and switch to the 'main' branch */
             shwrapCapture("""
-                git clone --depth=1 --branch main https://github.com/${fork_repo}.git
+                git clone --depth=1 --branch baseplugins https://github.com/${fork_repo}.git
             """)
             /* Read the plugins from the lockfile */
             pluginslist = shwrapCapture("grep -v ^# ${plugins_lockfile}").split('\n')
@@ -116,15 +116,15 @@ node {
                 shwrap("""
                     cd fedora-coreos-pipeline
                     git add ${plugins_lockfile}
-                    git commit -m '${message}' -m 'Job URL: ${env.BUILD_URL}' -m 'Job definition: https://github.com/coreos/fedora-coreos-pipeline/blob/main/jobs/bump-jenkins-plugins.Jenkinsfile'
+                    git commit -m '${message}' -m 'Job URL: ${env.BUILD_URL}' -m 'Job definition: https://github.com/coreos/fedora-coreos-pipeline/blob/baseplugins/jobs/bump-jenkins-plugins.Jenkinsfile'
                 """)
                 withCredentials([usernamePassword(credentialsId: botCreds,
                                                   usernameVariable: 'GHUSER',
                                                   passwordVariable: 'GHTOKEN')]) {
                                                     shwrap("""
                                                         cd fedora-coreos-pipeline
-                                                        git push -f https://\${GHUSER}:\${GHTOKEN}@github.com/${fork_repo} main:${pr_branch}
-                                                        curl -H "Authorization: token ${GHTOKEN}" -X POST -d '{ "title": "${message}", "head": "${pr_branch}", "base": "main" }' https://api.github.com/repos/${fork_repo}/pulls
+                                                        git push -f https://\${GHUSER}:\${GHTOKEN}@github.com/${fork_repo} baseplugins:${pr_branch}
+                                                        curl -H "Authorization: token ${GHTOKEN}" -X POST -d '{ "title": "${message}", "head": "${pr_branch}", "base": "basuplugins" }' https://api.github.com/repos/${fork_repo}/pulls
                                                     """)
                 }
             }
