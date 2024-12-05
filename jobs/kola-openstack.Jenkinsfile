@@ -34,7 +34,7 @@ properties([
     ]),
     buildDiscarder(logRotator(
         numToKeepStr: '100',
-        artifactNumToKeepStr: '100'
+        artifactNumToKeepStr: '30'
     )),
     durabilityHint('PERFORMANCE_OPTIMIZED')
 ])
@@ -119,6 +119,7 @@ lock(resource: "kola-openstack-${params.ARCH}") {
                      extraArgs: params.KOLA_TESTS,
                      rerunSuccessArgs: "tags=all",
                      skipUpgrade: true,
+                     skipKolaTags: stream_info.skip_kola_tags,
                      platformArgs: """-p=openstack                               \
                          --openstack-config-file=\${OPENSTACK_KOLA_TESTS_CONFIG} \
                          --openstack-flavor=v3-starter-4                         \
@@ -134,8 +135,14 @@ lock(resource: "kola-openstack-${params.ARCH}") {
                         --region=${region} delete-image --id=${openstack_image_name}
                     """)
                 }
+                stage('Garbage Collection') {
+                    shwrap("""
+                    ore openstack gc --debug                          \
+                        --config-file=\${OPENSTACK_KOLA_TESTS_CONFIG} \
+                        --region=${region} \
+                    """)
+                }
             }
-
         }
 
         currentBuild.result = 'SUCCESS'

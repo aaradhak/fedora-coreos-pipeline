@@ -72,7 +72,8 @@ currentBuild.description = "[${params.STREAM}][${params.ARCH}] - ${start_version
 def cosa_memory_request_mb = 1024
 if (params.ARCH == 'x86_64') {
     // local (qemu+x86_64) testing will require more memory
-    cosa_memory_request_mb = 3584
+    // bios=1024, uefi=1024, uefi-secure=1536, overhead=512
+    cosa_memory_request_mb = 1024 + 1024 + 1536 + 512
 }
 
 lock(resource: "kola-upgrade-${params.ARCH}") {
@@ -186,6 +187,7 @@ EOF
                 extraArgs: "--tag extended-upgrade --append-butane tmp/target_stream.bu",
                 skipBasicScenarios: true,
                 skipUpgrade: true,
+                skipKolaTags: pipecfg.streams[params.STREAM].skip_kola_tags,
             ]
             def k1, k2, k3
 

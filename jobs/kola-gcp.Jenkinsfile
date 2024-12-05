@@ -34,7 +34,7 @@ properties([
     ]),
     buildDiscarder(logRotator(
         numToKeepStr: '100',
-        artifactNumToKeepStr: '100'
+        artifactNumToKeepStr: '30'
     )),
     durabilityHint('PERFORMANCE_OPTIMIZED')
 ])
@@ -78,6 +78,7 @@ cosaPod(memory: "512Mi", kvm: false,
                 kola(cosaDir: env.WORKSPACE, parallel: 5,
                     build: params.VERSION, arch: params.ARCH,
                     extraArgs: params.KOLA_TESTS,
+                    skipKolaTags: stream_info.skip_kola_tags,
                     platformArgs: """-p=gcp \
                         --gcp-json-key=\${GCP_KOLA_TESTS_CONFIG} \
                         --gcp-project=${gcp_project}""")
@@ -91,17 +92,19 @@ cosaPod(memory: "512Mi", kvm: false,
                     // https://github.com/coreos/fedora-coreos-tracker/issues/1202
                     def confidential_tests = tests
                     if (confidential_tests == "basic") {
-                        confidential_tests = "basic ext.config.platforms.gcp.nvme-symlink"
+                        confidential_tests = "basic ext.config.platforms.gcp.confidential-vm-nvme-symlink"
                     }
+                    // https://github.com/coreos/coreos-assembler/issues/3556
                     kola(cosaDir: env.WORKSPACE,
                         build: params.VERSION, arch: params.ARCH,
                         extraArgs: confidential_tests,
                         skipUpgrade: true,
+                        skipKolaTags: stream_info.skip_kola_tags,
                         marker: "confidential",
                         platformArgs: """-p=gcp \
                             --gcp-json-key=\${GCP_KOLA_TESTS_CONFIG} \
                             --gcp-project=${gcp_project} \
-                            --gcp-confidential-vm""")
+                            --gcp-confidential-type sev_snp""")
                 }
             }
             

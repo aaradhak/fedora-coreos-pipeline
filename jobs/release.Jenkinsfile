@@ -40,6 +40,10 @@ properties([
              defaultValue: "",
              trim: true)
     ] + pipeutils.add_hotfix_parameters_if_supported()),
+    buildDiscarder(logRotator(
+        numToKeepStr: '200',
+        artifactNumToKeepStr: '200'
+    )),
     durabilityHint('PERFORMANCE_OPTIMIZED')
 ])
 
@@ -88,10 +92,12 @@ def locks = basearches.collect{[resource: "release-${params.VERSION}-${it}"]}
 lock(resource: "release-${params.STREAM}", extra: locks) {
     // We should probably try to change this behavior in the coreos-ci-lib
     // So we won't need to handle the secret case here.
-    def cosaPodDefinition =  [cpu: "1", memory: "1Gi", image: cosa_img,
+    // Request 4.5Gi: in the worst case, we need to upload 4 container images in
+    // parallel via supermin and each VM is 1G.
+    def cosaPodDefinition =  [cpu: "1", memory: "4608Mi", image: cosa_img,
             serviceAccount: "jenkins"]
     if (brew_profile) {
-        cosaPodDefinition = [cpu: "1", memory: "1Gi", image: cosa_img,
+        cosaPodDefinition = [cpu: "1", memory: "4608Mi", image: cosa_img,
             serviceAccount: "jenkins",
             secrets: ["brew-keytab", "brew-ca:ca.crt:/etc/pki/ca.crt",
                       "koji-conf:koji.conf:/etc/koji.conf",
@@ -263,37 +269,21 @@ lock(resource: "release-${params.STREAM}", extra: locks) {
                         def tag_args = registry_repos[configname].tags.collect{"--tag=$it"}
                         def v2s2_arg = registry_repos.v2s2 ? "--v2s2" : ""
                         shwrap("""
-                        export STORAGE_DRIVER=vfs # https://github.com/coreos/fedora-coreos-pipeline/issues/723#issuecomment-1297668507
-                        cosa push-container-manifest --auth=\${REGISTRY_SECRET} \
+                        export COSA_SUPERMIN_MEMORY=1024 # this really shouldn't require much RAM
+                        cp \${REGISTRY_SECRET} tmp/push-secret-${metajsonname}
+                        cosa supermin-run /usr/lib/coreos-assembler/cmd-push-container-manifest \
+                            --auth=tmp/push-secret-${metajsonname} \
                             --repo=${repo} ${tag_args.join(' ')} \
                             --artifact=${artifact} --metajsonname=${metajsonname} \
                             --build=${params.VERSION} ${v2s2_arg}
+                        rm tmp/push-secret-${metajsonname}
                         """)
-
-                        def old_repo = registry_repos."${configname}_old"?.repo
-                        if (old_repo) {
-                            // a separate credential for the old location is optional; we support it
-                            // being merged as part of oscontainer-push-registry-secret
-                            pipeutils.tryWithOrWithoutCredentials([file(variable: 'OLD_REGISTRY_SECRET',
-                                                                        credentialsId: 'oscontainer-push-old-registry-secret')]) {
-                                def authArg = "--authfile=\${REGISTRY_SECRET}"
-                                if (env.OLD_REGISTRY_SECRET) {
-                                    authArg += " --dest-authfile=\${OLD_REGISTRY_SECRET}"
-                                }
-                                shwrap("""
-                                export STORAGE_DRIVER=vfs # https://github.com/coreos/fedora-coreos-pipeline/issues/723#issuecomment-1297668507
-                                cosa copy-container ${authArg} ${tag_args.join(' ')} \
-                                    --manifest-list-to-arch-tag=auto \
-                                    ${repo} ${old_repo}
-                                """)
-                            }
-                        }
                     }
                 }]}
             }
         }
 
-        if (brew_profile) {
+        if (brew_profile && !stream_info.skip_brew_upload) {
             stage('Brew Upload') {
                 def tag = pipecfg.streams[params.STREAM].brew_tag
                 for (arch in basearches) {
@@ -352,6 +342,12 @@ lock(resource: "release-${params.STREAM}", extra: locks) {
                 }
             }
         }
+        stage('Fork Garbage Collection') {
+            build job: 'garbage-collection', wait: false, parameters: [
+                string(name: 'STREAM', value: params.STREAM),
+                booleanParam(name: 'DRY_RUN', value: false)
+            ]
+        }
         stage('Publish') {
             pipeutils.withAWSBuildUploadCredentials() {
                 // Since some of the earlier operations (like AWS replication) only modify
@@ -397,12 +393,11 @@ lock(resource: "release-${params.STREAM}", extra: locks) {
             }
 
             pipeutils.tryWithMessagingCredentials() {
-                for (basearch in basearches) {
-                    shwrap("""
-                    /usr/lib/coreos-assembler/fedmsg-broadcast --fedmsg-conf=\${FEDORA_MESSAGING_CONF} \
-                        stream.release --build ${params.VERSION} --basearch ${basearch} --stream ${params.STREAM}
-                    """)
-                }
+                def basearch_args = basearches.collect{"--basearch ${it}"}.join(" ")
+                shwrap("""
+                /usr/lib/coreos-assembler/fedmsg-broadcast --fedmsg-conf=\${FEDORA_MESSAGING_CONF} \
+                    stream.release --build ${params.VERSION} ${basearch_args} --stream ${params.STREAM}
+                """)
             }
         }
 

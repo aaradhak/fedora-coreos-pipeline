@@ -242,6 +242,8 @@ If you want to store builds persistently, now is a good time to allocate
 S3 storage.  See the [upstream coreos-assembler docs](https://github.com/coreos/coreos-assembler/blob/main/README-design.md)
 around build architecture.
 
+If you need to set up versioning and lifecycle management for the bucket, refer to [s3 bucket versioning doc](https://github.com/coreos/fedora-coreos-pipeline/blob/main/docs/s3-bucket-versioning.md) for detailed steps. For FCOS production builds using the `fcos-builds` bucket we apply a lifecycle policy of 14 days to manage old versions efficiently.
+
 Today, the FCOS pipeline is oriented towards having its own
 bucket; this will likely be fixed in the future.  But using your
 credentials, you should now do e.g.:
@@ -376,24 +378,6 @@ oc label secret/oscontainer-push-registry-secret \
     jenkins.io/credentials-type=secretFile
 oc annotate secret/oscontainer-push-registry-secret \
     jenkins.io/credentials-description="Push secret for registry for CoreOS OSContainer"
-```
-
-### [PROD] Create OSContainer image push secret for old location
-
-This secret is used to push the oscontainer and others to the old registry. The
-secret can be obtained from the `oscontainer-push-old-registry-secret` in
-BitWarden.
-
-After obtaining the secret data you can create the Kubernetes secret via:
-
-```
-oc create secret generic oscontainer-push-old-registry-secret \
-    --from-literal=filename=dockercfg \
-    --from-file=data=oscontainer-push-old-registry-secret
-oc label secret/oscontainer-push-old-registry-secret \
-    jenkins.io/credentials-type=secretFile
-oc annotate secret/oscontainer-push-old-registry-secret \
-    jenkins.io/credentials-description="Push secret for old registry for CoreOS OSContainer"
 ```
 
 ### [PROD] Create COSA image push secret
@@ -547,6 +531,13 @@ The `STORAGE_CLASS_NAME` may be required depending on the cluster. If
 using a development cluster, it normally isn't, and you can drop it. For
 the Fedora prod cluster, use `ocs-storagecluster-ceph-rbd` as shown
 above.
+
+If using an additional root CA certificate, then you will also need to
+specify the `AGENT_NAMESPACE` parameter to yours, e.g.:
+
+```
+  --param=AGENT_NAMESPACE=fedora-coreos-pipeline \
+```
 
 Now, create the Jenkins configmap:
 

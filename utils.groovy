@@ -8,9 +8,11 @@ import org.yaml.snakeyaml.Yaml
 PROTECTED_JENKINSES = [
     'https://jenkins-fedora-coreos-pipeline.apps.ocp.fedoraproject.org/':
         ['fcos-builds', 'prod/streams/${STREAM}', false],
-    'https://jenkins-rhcos-devel.apps.ocp-virt.prod.psi.redhat.com/':
+    'https://jenkins-rhcos--devel-pipeline.apps.int.preprod-stable-spoke1-dc-iad2.itup.redhat.com/':
         ['rhcos-ci', 'prod/streams/${STREAM}', true],
     'https://jenkins-rhcos.apps.ocp-virt.prod.psi.redhat.com/':
+        ['art-rhcos-ci', 'prod/streams/${STREAM}', true],
+    'https://jenkins-rhcos--prod-pipeline.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/':
         ['art-rhcos-ci', 'prod/streams/${STREAM}', true]
 ]
 
@@ -92,6 +94,21 @@ def validate_pipecfg(pipecfg, is_hotfix) {
     }
 }
 
+def load_gc() {
+    def jenkinscfg = load_jenkins_config()
+    def url = jenkinscfg['pipecfg-url']
+    def gc_policy_data
+
+    if (url == 'in-tree') {
+        gc_policy_data = readYaml(file: "gc-policy.yaml")
+    } else {
+        // assume the user called `load_pipecfg()` in this workdir; if not, let error out
+        gc_policy_data = readYaml(file: "pipecfg/gc-policy.yaml")
+    }
+
+    return gc_policy_data
+}
+
 def add_hotfix_parameters_if_supported() {
     def supported = true
     if (env.JENKINS_URL in PROTECTED_JENKINSES) {
@@ -123,6 +140,19 @@ def get_source_config_ref_for_stream(pipecfg, stream) {
     }
 }
 
+def get_env_vars_for_stream(pipecfg, stream) {
+    def x = [:]
+    // Grab the globally configured env vars first
+    if (pipecfg.env) {
+        x.putAll(pipecfg.env)
+    }
+    // Values in stream specific env vars override
+    // the global ones.
+    if (pipecfg.streams[stream].env) {
+        x.putAll(pipecfg.streams[stream].env)
+    }
+    return x
+}
 
 // Parse and handle the result of Kola
 boolean checkKolaSuccess(file) {
@@ -187,7 +217,7 @@ def bump_builds_json(stream, buildid, arch, s3_stream_dir, acl) {
     // unlock
     //
     // XXX: should fold this into `cosa buildupload` somehow
-    lock(resource: "bump-builds-json-${stream}") {
+    lock(resource: "builds-json-${stream}") {
         def remotejson = "s3://${s3_stream_dir}/builds/builds.json"
         aws_s3_cp_allow_noent(remotejson, './remote-builds.json')
         shwrap("""
@@ -212,6 +242,30 @@ def bump_builds_json(stream, buildid, arch, s3_stream_dir, acl) {
             --acl=${acl} builds/builds.json s3://${s3_stream_dir}/builds/builds.json
         """)
     }
+}
+
+// Make a COSA remote session, which is usually used to
+// build on a different architecture.
+//
+// Available parameters:
+//    env: (optional) map of key/val pairs of environment variables to set
+//    expiration: string that represents a golang duration for how
+//                long the container should last (i.e. 4h, 30m)
+//    image: string that represents the container image to pull
+//    workdir: string that represents the in container working directory
+def makeCosaRemoteSession(params = [:]) {
+    def expiration = params['expiration']
+    def image = params['image']
+    def workdir = params['workdir']
+    def envArgs = []
+    if (params['env']) {
+        envArgs = params['env'].collect { k, v -> "--env ${k}=${v}" }
+    }
+    def session = shwrapCapture("""
+    cosa remote-session create --image ${image} \
+        ${envArgs.join(" ")} --expiration ${expiration} --workdir ${workdir}
+    """)
+    return session
 }
 
 // Run in a podman remote context on a builder of the given
@@ -330,6 +384,12 @@ def streams_of_type(config, type) {
     return config.streams.findAll{k, v -> v.type == type}.collect{k, v -> k}
 }
 
+// Returns a list of stream names from `streams_subset` that have `scheduled: true` set
+def scheduled_streams(config, streams_subset) {
+    return streams_subset.findAll{stream ->
+        config.streams[stream].scheduled}.collect{k, v -> k}
+}
+
 def get_streams_choices(config) {
     def default_stream = config.streams.find{k, v -> v['default'] == true}?.key
     def other_streams = config.streams.keySet().minus(default_stream) as List
@@ -372,6 +432,42 @@ def build_artifacts(pipecfg, stream, basearch) {
 
     // First get the list of artifacts to build from the config
     def artifacts = get_artifacts_to_build(pipecfg, stream, basearch)
+
+    // If `cosa osbuild` is supported then let's build what we can using OSBuild
+    if (shwrapRc("cosa shell -- test -e /usr/lib/coreos-assembler/cmd-osbuild") == 0) {
+        // Determine which platforms are OSBuild experimental versus
+        // stable (i.e. the default is to use OSBuild for them).
+        def experimental = shwrapCapture("cosa osbuild --supported-platforms").tokenize()
+        def stable = shwrapCapture('''
+            cosa shell -- bash -c '
+                for buildextend in /usr/lib/coreos-assembler/cmd-buildextend-*; do
+                    if [ "$(readlink -f ${buildextend})" == "/usr/lib/coreos-assembler/cmd-osbuild" ]; then
+                        # the 42 here chops off /usr/lib/coreos-assembler/cmd-buildextend-
+                        echo "${buildextend:42}"
+                    fi
+                done
+            '
+        ''').tokenize('\n')
+        // Based on the pipeline configuration we'll either use OSBuild for as
+        // much as we can (experimental) or just what it is the default for (stable)
+        def osbuild_supported_artifacts = stable
+        if (pipecfg.streams[stream].osbuild_experimental) {
+            osbuild_supported_artifacts = experimental
+        }
+        // Let's build separately the artifacts that can be built directly with OSBuild.
+        def osbuild_artifacts = []
+        for (artifact in artifacts) {
+            if (artifact in osbuild_supported_artifacts) {
+                osbuild_artifacts += artifact
+            }
+        }
+        if (!osbuild_artifacts.isEmpty()) {
+            artifacts.removeAll(osbuild_artifacts)
+            stage('💽:OSBuild') {
+                shwrap("cosa osbuild ${osbuild_artifacts.join(' ')}")
+            }
+        }
+    }
 
     // Next let's do some massaging of the inputs based on two problems we
     // need to consider:
@@ -470,7 +566,7 @@ def run_cloud_tests(pipecfg, stream, version, cosa, basearch, commit) {
                   string(name: 'SRC_CONFIG_COMMIT', value: commit)]
 
     // Kick off the Kola AWS job if we have an uploaded image, credentials, and testing is enabled.
-    if (shwrapCapture("cosa meta --build=${version} --get-value amis") != "None" &&
+    if (shwrapCapture("cosa meta --build=${version} --arch=${basearch} --get-value amis") != "None" &&
         cloud_testing_enabled_for_arch(pipecfg, 'aws', basearch) &&
         utils.credentialsExist([file(variable: 'AWS_KOLA_TESTS_CONFIG',
                                      credentialsId: 'aws-kola-tests-config')])) {
@@ -481,17 +577,15 @@ def run_cloud_tests(pipecfg, stream, version, cosa, basearch, commit) {
     }
 
     // Kick off the Kola Azure job if we have an artifact, credentials, and testing is enabled.
-    if (shwrapCapture("cosa meta --build=${version} --get-value images.azure") != "None" &&
+    if (shwrapCapture("cosa meta --build=${version} --arch=${basearch} --get-value images.azure") != "None" &&
         cloud_testing_enabled_for_arch(pipecfg, 'azure', basearch) &&
-        utils.credentialsExist([file(variable: 'AZURE_KOLA_TESTS_CONFIG_AUTH',
-                                     credentialsId: 'azure-kola-tests-config-auth'),
-                                file(variable: 'AZURE_KOLA_TESTS_CONFIG_PROFILE',
-                                     credentialsId: 'azure-kola-tests-config-profile')])) {
+        utils.credentialsExist([file(variable: 'AZURE_KOLA_TESTS_CONFIG',
+                                     credentialsId: 'azure-kola-tests-config')])) {
         testruns['Kola:Azure'] = { build job: 'kola-azure', wait: false, parameters: params }
     }
 
     // Kick off the Kola GCP job if we have an uploaded image, credentials, and testing is enabled.
-    if (shwrapCapture("cosa meta --build=${version} --get-value gcp") != "None" &&
+    if (shwrapCapture("cosa meta --build=${version} --arch=${basearch} --get-value gcp") != "None" &&
         cloud_testing_enabled_for_arch(pipecfg, 'gcp', basearch) &&
         utils.credentialsExist([file(variable: 'GCP_KOLA_TESTS_CONFIG',
                                      credentialsId: 'gcp-kola-tests-config')])) {
@@ -499,7 +593,7 @@ def run_cloud_tests(pipecfg, stream, version, cosa, basearch, commit) {
     }
 
     // Kick off the Kola OpenStack job if we have an artifact, credentials, and testing is enabled.
-    if (shwrapCapture("cosa meta --build=${version} --get-value images.openstack") != "None" &&
+    if (shwrapCapture("cosa meta --build=${version} --arch=${basearch} --get-value images.openstack") != "None" &&
         cloud_testing_enabled_for_arch(pipecfg, 'openstack', basearch) &&
         utils.credentialsExist([file(variable: 'OPENSTACK_KOLA_TESTS_CONFIG',
                                      credentialsId: 'openstack-kola-tests-config')])) {
@@ -622,6 +716,32 @@ def AWSBuildUploadCredentialExists() {
     return utils.credentialsExist(creds)
 }
 
+// Calls `cosa sign robosignatory --images ...`. Assumes to have access to the
+// messaging credentials.
+def signImages(stream, version, basearch, s3_stream_dir, verify_only=false) {
+    def verify_arg = verify_only ? "--verify-only" : ""
+    shwrapWithAWSBuildUploadCredentials("""
+    cosa sign --build=${version} --arch=${basearch} \
+        robosignatory --s3 ${s3_stream_dir}/builds \
+        --aws-config-file \${AWS_BUILD_UPLOAD_CONFIG} \
+        --extra-fedmsg-keys stream=${stream} \
+        --images ${verify_arg} --gpgkeypath /etc/pki/rpm-gpg \
+        --fedmsg-conf \${FEDORA_MESSAGING_CONF}
+    """)
+}
+
+// Requests OSTree commit to be imported into the compose repo. Assumes to have
+// access to the messaging credentials.
+def composeRepoImport(version, basearch, s3_stream_dir) {
+    shwrap("""
+    cosa shell -- \
+    /usr/lib/coreos-assembler/fedmsg-send-ostree-import-request \
+        --build=${version} --arch=${basearch} \
+        --s3=${s3_stream_dir} --repo=compose \
+        --fedmsg-conf \${FEDORA_MESSAGING_CONF}
+    """)
+}
+
 // Grabs the jenkins.io/emoji-prefix annotation from the slack-api-token
 def getSlackEmojiPrefix() {
     def emoji = shwrapCapture("""
@@ -669,6 +789,25 @@ def get_supported_additional_arches() {
         }
     }
     return supported
+}
+
+// try sending a message on matrix through maubot
+def matrixSend(message) {
+
+    withCredentials([usernamePassword(credentialsId: 'matrix-bot-webhook-token',
+                                      usernameVariable: 'MATRIX_WEBHOOK_URL',
+                                      passwordVariable: 'TOKEN')]) {
+
+    shwrap("""
+           curl -X POST -H "Content-Type: application/json" \
+           -u \$TOKEN \$MATRIX_WEBHOOK_URL \
+           --silent \
+           -d '
+           {
+             "body": "$message"
+            }'
+    """)
+    }
 }
 
 return this

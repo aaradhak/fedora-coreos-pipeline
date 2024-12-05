@@ -83,6 +83,9 @@ if (params.ADDITIONAL_ARCHES != "none") {
 
 def stream_info = pipecfg.streams[params.STREAM]
 
+// Grab any environment variables we should set
+def container_env = pipeutils.get_env_vars_for_stream(pipecfg, params.STREAM)
+
 // If we are a mechanical stream then we can pin packages but we
 // don't maintain complete lockfiles so we can't build in strict mode.
 def strict_build_param = stream_info.type == "mechanical" ? "" : "--strict"
@@ -111,6 +114,11 @@ def newBuildID, basearch
 
 // matches between build/build-arch job
 def timeout_mins = 240
+if (pipecfg.hacks?.ppc64le_kola_minimal) {
+    // XXX: extend the timeout for ppc64le; temporary measure for ppc64le move
+    // in RHCOS pipeline
+    timeout_mins = 300
+}
 
 if (params.WAIT_FOR_RELEASE_JOB) {
     // Waiting for the release job effectively means waiting for all the build-
@@ -145,6 +153,7 @@ lock(resource: "build-${params.STREAM}") {
     cosaPod(cpu: "${ncpus}",
             memory: "${cosa_memory_request_mb}Mi",
             image: cosa_img,
+            env: container_env,
             serviceAccount: "jenkins") {
     timeout(time: timeout_mins, unit: 'MINUTES') {
     try {
@@ -241,13 +250,6 @@ lock(resource: "build-${params.STREAM}") {
             prevBuildID = shwrapCapture("readlink builds/latest")
         }
 
-        def new_version = ""
-        if (params.VERSION) {
-            new_version = params.VERSION
-        } else if (pipecfg.versionary_hack) {
-            new_version = shwrapCapture("/usr/lib/coreos-assembler/fcos-versionary")
-        }
-
         def overrides_fetch_param = ""
 
         // fetch from repos for the current build
@@ -265,10 +267,22 @@ lock(resource: "build-${params.STREAM}") {
             if (parent_version != "") {
                 parent_arg = "--parent-build ${parent_version}"
             }
-            def version = new_version ? "--version ${new_version}" : ""
+            def version_arg = ""
+            if (params.VERSION) {
+                version_arg = "--version ${params.VERSION}"
+            } else {
+                def use_versionary = pipecfg.misc?.versionary
+                if (stream_info.containsKey('versionary')) {
+                    // stream override always wins
+                    use_versionary = stream_info.versionary
+                }
+                if (use_versionary) {
+                    version_arg = "--versionary"
+                }
+            }
             def force = params.FORCE ? "--force" : ""
             shwrap("""
-            cosa build ostree ${strict_build_param} --skip-prune ${force} ${version} ${parent_arg}
+            cosa build ostree ${strict_build_param} --skip-prune ${force} ${version_arg} ${parent_arg}
             """)
 
             // Insert the parent info into meta.json so we can display it in
@@ -360,7 +374,8 @@ lock(resource: "build-${params.STREAM}") {
             kola(cosaDir: env.WORKSPACE, parallel: n, arch: basearch,
                  skipUpgrade: pipecfg.hacks?.skip_upgrade_tests,
                  allowUpgradeFail: params.ALLOW_KOLA_UPGRADE_FAILURE,
-                 skipSecureBoot: pipecfg.hotfix?.skip_secureboot_tests_hack)
+                 skipSecureBoot: pipecfg.hotfix?.skip_secureboot_tests_hack,
+                 skipKolaTags: stream_info.skip_kola_tags)
         }
 
         // If desired let's go ahead and archive+fork the multi-arch jobs
@@ -378,7 +393,7 @@ lock(resource: "build-${params.STREAM}") {
             // NOTE: This approach only checks the legacy extensions and not the new extensions
             // container. This check can be removed for 9.3+ builds when we drop the legacy
             // oscontainer as the versions will be matched using `match-base-evr` in `extensions.yaml`.
-            if (pipecfg.misc?.check_kernel_rt_mismatch_rhcos) {
+            if (stream_info.check_kernel_rt_mismatch_rhcos) {
                 echo("Verifying kernel + kernel-rt versions match")
                 def build_meta = [readJSON(file: "builds/latest/${basearch}/commitmeta.json"), readJSON(file: "builds/latest/${basearch}/meta.json")]
                 def kernel_version = build_meta[0]['ostree.linux'].split('.el')[0]
@@ -445,23 +460,10 @@ lock(resource: "build-${params.STREAM}") {
             pipeutils.tryWithMessagingCredentials() {
                 def parallelruns = [:]
                 parallelruns['Sign Images'] = {
-                    pipeutils.shwrapWithAWSBuildUploadCredentials("""
-                    cosa sign --build=${newBuildID} --arch=${basearch} \
-                        robosignatory --s3 ${s3_stream_dir}/builds \
-                        --aws-config-file \${AWS_BUILD_UPLOAD_CONFIG} \
-                        --extra-fedmsg-keys stream=${params.STREAM} \
-                        --images --gpgkeypath /etc/pki/rpm-gpg \
-                        --fedmsg-conf \${FEDORA_MESSAGING_CONF}
-                    """)
+                    pipeutils.signImages(params.STREAM, newBuildID, basearch, s3_stream_dir)
                 }
                 parallelruns['OSTree Import: Compose Repo'] = {
-                    shwrap("""
-                    cosa shell -- \
-                    /usr/lib/coreos-assembler/fedmsg-send-ostree-import-request \
-                        --build=${newBuildID} --arch=${basearch} \
-                        --s3=${s3_stream_dir} --repo=compose \
-                        --fedmsg-conf \${FEDORA_MESSAGING_CONF}
-                    """)
+                    pipeutils.composeRepoImport(newBuildID, basearch, s3_stream_dir)
                 }
                 // process this batch
                 parallel parallelruns

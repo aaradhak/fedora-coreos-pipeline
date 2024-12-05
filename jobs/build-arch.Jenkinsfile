@@ -74,7 +74,10 @@ cosa_img = cosa_img ?: pipeutils.get_cosa_img(pipecfg, params.STREAM)
 
 def stream_info = pipecfg.streams[params.STREAM]
 
-def cosa_controller_img = stream_info.cosa_controller_img_hack ?: cosa_img
+def cosa_controller_img = stream_info.cosa_controller_img ?: "quay.io/coreos-assembler/coreos-assembler:main"
+
+// Grab any environment variables we should set
+def container_env = pipeutils.get_env_vars_for_stream(pipecfg, params.STREAM)
 
 // If we are a mechanical stream then we can pin packages but we
 // don't maintain complete lockfiles so we can't build in strict mode.
@@ -97,7 +100,7 @@ def newBuildID = params.VERSION
 def basearch = params.ARCH
 
 // matches between build/build-arch job
-def timeout_mins = 240
+def timeout_mins = 300
 
 // release lock: we want to block the release job until we're done.
 // ideally we'd lock this from the main pipeline and have lock ownership
@@ -110,6 +113,7 @@ lock(resource: "build-${params.STREAM}-${basearch}") {
     cosaPod(cpu: "${ncpus}",
             memory: "${cosa_memory_request_mb}Mi",
             image: cosa_controller_img,
+            env: container_env,
             serviceAccount: "jenkins") {
     timeout(time: timeout_mins, unit: 'MINUTES') {
     try {
@@ -135,12 +139,15 @@ lock(resource: "build-${params.STREAM}-${basearch}") {
         // commands, should get intercepted and executed on the remote.
         // We set environment variables that describe our remote host
         // that `podman --remote` will transparently pick up and use.
-        // We set the session to time out after 4h. This essentially
+        // We set the session to time out after 5h. This essentially
         // performs garbage collection on the remote if we fail to clean up.
         pipeutils.withPodmanRemoteArchBuilder(arch: basearch) {
-        def session = shwrapCapture("""
-        cosa remote-session create --image ${cosa_img} --expiration 4h --workdir ${env.WORKSPACE}
-        """)
+        def session = pipeutils.makeCosaRemoteSession(
+            env: container_env,
+            expiration: "${timeout_mins}m",
+            image: cosa_img,
+            workdir: WORKSPACE,
+        )
         withEnv(["COREOS_ASSEMBLER_REMOTE_SESSION=${session}"]) {
 
         // add any additional root CA cert before we do anything that fetches
@@ -298,7 +305,8 @@ lock(resource: "build-${params.STREAM}-${basearch}") {
             kola(cosaDir: env.WORKSPACE, parallel: n, arch: basearch,
                  skipUpgrade: pipecfg.hacks?.skip_upgrade_tests,
                  allowUpgradeFail: params.ALLOW_KOLA_UPGRADE_FAILURE,
-                 skipSecureBoot: pipecfg.hotfix?.skip_secureboot_tests_hack)
+                 skipSecureBoot: pipecfg.hotfix?.skip_secureboot_tests_hack,
+                 skipKolaTags: stream_info.skip_kola_tags)
         }
 
         // Build the remaining artifacts
@@ -335,7 +343,8 @@ lock(resource: "build-${params.STREAM}-${basearch}") {
         }
 
         stage('Archive') {
-            shwrap("cosa compress")
+            // Limit to 4G to be good neighbours and reduce chances of getting OOMkilled.
+            shwrap("cosa shell -- env XZ_DEFAULTS=--memlimit=4G cosa compress")
 
             if (uploading) {
                 def acl = pipecfg.s3.acl ?: 'public-read'
@@ -362,23 +371,10 @@ lock(resource: "build-${params.STREAM}-${basearch}") {
             pipeutils.tryWithMessagingCredentials() {
                 def parallelruns = [:]
                 parallelruns['Sign Images'] = {
-                    pipeutils.shwrapWithAWSBuildUploadCredentials("""
-                    cosa sign --build=${newBuildID} --arch=${basearch} \
-                        robosignatory --s3 ${s3_stream_dir}/builds \
-                        --aws-config-file \${AWS_BUILD_UPLOAD_CONFIG} \
-                        --extra-fedmsg-keys stream=${params.STREAM} \
-                        --images --gpgkeypath /etc/pki/rpm-gpg \
-                        --fedmsg-conf \${FEDORA_MESSAGING_CONF}
-                    """)
+                    pipeutils.signImages(params.STREAM, newBuildID, basearch, s3_stream_dir)
                 }
                 parallelruns['OSTree Import: Compose Repo'] = {
-                    shwrap("""
-                    cosa shell -- \
-                    /usr/lib/coreos-assembler/fedmsg-send-ostree-import-request \
-                        --build=${newBuildID} --arch=${basearch} \
-                        --s3=${s3_stream_dir} --repo=compose \
-                        --fedmsg-conf \${FEDORA_MESSAGING_CONF}
-                    """)
+                    pipeutils.composeRepoImport(newBuildID, basearch, s3_stream_dir)
                 }
                 // process this batch
                 parallel parallelruns

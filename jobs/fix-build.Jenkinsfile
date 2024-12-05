@@ -11,20 +11,25 @@ properties([
     parameters([
       choice(name: 'STREAM',
              choices: pipeutils.get_streams_choices(pipecfg),
-             description: 'CoreOS stream to release'),
+             description: 'CoreOS stream to sign'),
       string(name: 'VERSION',
-             description: 'CoreOS version to release',
+             description: 'CoreOS version to sign',
              defaultValue: '',
              trim: true),
-      string(name: 'ADDITIONAL_ARCHES',
-             description: "Override additional architectures (space-separated). " +
-                          "Use 'none' to only replicate for x86_64. " +
-                          "Supported: ${pipeutils.get_supported_additional_arches().join(' ')}",
+      string(name: 'ARCHES',
+             description: "Override architectures (space-separated) to sign. " +
+                          "Defaults to all arches for this stream.",
              defaultValue: "",
              trim: true),
-      booleanParam(name: 'ALLOW_MISSING_ARCHES',
+      booleanParam(name: 'SKIP_SIGNING',
                    defaultValue: false,
-                   description: 'Allow release to continue even with missing architectures'),
+                   description: 'Skip signing artifacts'),
+      booleanParam(name: 'SKIP_COMPOSE_IMPORT',
+                   defaultValue: false,
+                   description: 'Skip requesting compose repo import'),
+      booleanParam(name: 'SKIP_TESTS',
+                   defaultValue: false,
+                   description: 'Skip triggering cloud and upgrade tests'),
       string(name: 'COREOS_ASSEMBLER_IMAGE',
              description: 'Override coreos-assembler image to use',
              defaultValue: "",
@@ -55,47 +60,47 @@ if (params.VERSION == "") {
     throw new Exception("Missing VERSION parameter!")
 }
 
+build_description = "${build_description}[$params.VERSION]"
+
 // runtime parameter always wins
 def cosa_img = params.COREOS_ASSEMBLER_IMAGE
 cosa_img = cosa_img ?: pipeutils.get_cosa_img(pipecfg, params.STREAM)
+
 def basearches = []
-if (params.ADDITIONAL_ARCHES != "none") {
-    basearches = params.ADDITIONAL_ARCHES.split() as List
-    basearches = basearches ?: pipeutils.get_additional_arches(pipecfg, params.STREAM)
+if (params.ARCHES != "") {
+    basearches = params.ARCHES.split() as List
+} else {
+    basearches += 'x86_64'
+    basearches += pipeutils.get_additional_arches(pipecfg, params.STREAM)
 }
 
-// we always release for x86_64
-basearches += 'x86_64'
 // make sure there are no duplicates
 basearches = basearches.unique()
 
 def stream_info = pipecfg.streams[params.STREAM]
 
-build_description += "[${basearches.join(' ')}][${params.VERSION}]"
 currentBuild.description = "${build_description} Waiting"
 
 // We just lock here out of an abundance of caution in case somehow
 // two jobs run for the same stream, but that really shouldn't happen.
 // Also lock version-arch-specific locks to make sure these builds are finished.
-lock(resource: "cloud-replicate-${params.VERSION}") {
+lock(resource: "sign-${params.VERSION}") {
     cosaPod(cpu: "1", memory: "512Mi", image: cosa_img,
             serviceAccount: "jenkins") {
     try {
-
         currentBuild.description = "${build_description} Running"
 
         def s3_stream_dir = pipeutils.get_s3_streams_dir(pipecfg, params.STREAM)
-        def gcp_image = ""
-        def ostree_prod_refs = [:]
 
         // Fetch metadata files for the build we are interested in
         stage('Fetch Metadata') {
             def ref = pipeutils.get_source_config_ref_for_stream(pipecfg, params.STREAM)
             def variant = stream_info.variant ? "--variant ${stream_info.variant}" : ""
+            def arch_args = basearches.collect{"--arch=$it"}
             pipeutils.shwrapWithAWSBuildUploadCredentials("""
             cosa init --branch ${ref} ${variant} ${pipecfg.source_config.url}
             cosa buildfetch --build=${params.VERSION} \
-                --arch=all --url=s3://${s3_stream_dir}/builds \
+                ${arch_args.join(' ')} --artifact=all --url=s3://${s3_stream_dir}/builds \
                 --aws-config-file \${AWS_BUILD_UPLOAD_CONFIG}
             """)
         }
@@ -106,39 +111,55 @@ lock(resource: "cloud-replicate-${params.VERSION}") {
                           """).split() as Set
         assert builtarches.contains("x86_64"): "The x86_64 architecture was not in builtarches."
         if (!builtarches.containsAll(basearches)) {
-            if (params.ALLOW_MISSING_ARCHES) {
-                echo "Some requested architectures did not successfully build! Continuing."
-                basearches = builtarches.intersect(basearches)
-            } else {
-                echo "ERROR: Some requested architectures did not successfully build"
-                echo "ERROR: Detected built architectures: $builtarches"
-                echo "ERROR: Requested base architectures: $basearches"
-                currentBuild.result = 'FAILURE'
-                return
-            }
+            echo "ERROR: Some requested architectures did not successfully build"
+            echo "ERROR: Detected built architectures: $builtarches"
+            echo "ERROR: Requested base architectures: $basearches"
+            currentBuild.result = 'FAILURE'
+            return
         }
 
         // Update description based on updated set of architectures
         build_description = "[${params.STREAM}][${basearches.join(' ')}][${params.VERSION}]"
         currentBuild.description = "${build_description} Running"
 
-        for (basearch in basearches) {
-            libcloud.replicate_to_clouds(pipecfg, basearch, params.VERSION, params.STREAM)
-        }
+        def src_config_commit = shwrapCapture("""
+            jq '.[\"coreos-assembler.config-gitrev\"]' builds/${params.VERSION}/${basearches[0]}/meta.json
+        """)
 
-        stage('Publish') {
-            pipeutils.withAWSBuildUploadCredentials() {
-                // Since some of the earlier operations (like AWS replication) only modify
-                // the individual meta.json files we need to re-generate the release metadata
-                // to get the new info and upload it back to s3.
-                def arch_args = basearches.collect{"--arch ${it}"}.join(" ")
-                def acl = pipecfg.s3.acl ?: 'public-read'
-                shwrap("""
-                cosa generate-release-meta --build-id ${params.VERSION} --workdir .
-                cosa buildupload --build=${params.VERSION} --skip-builds-json \
-                    ${arch_args} s3 --aws-config-file=\${AWS_BUILD_UPLOAD_CONFIG} \
-                    --acl=${acl} ${s3_stream_dir}/builds
-                """)
+        for (basearch in basearches) {
+            pipeutils.tryWithMessagingCredentials() {
+                def parallelruns = [:]
+                if (!params.SKIP_SIGNING) {
+                    parallelruns['Sign Images'] = {
+                        pipeutils.signImages(params.STREAM, params.VERSION, basearch, s3_stream_dir)
+                    }
+                } else {
+                    // If we skipped signing, just at least validate them
+                    // and make sure they have public ACLs.
+                    parallelruns['Verify Image Signatures'] = {
+                        pipeutils.signImages(params.STREAM, params.VERSION, basearch, s3_stream_dir, true)
+                    }
+                }
+                if (!params.SKIP_COMPOSE_IMPORT) {
+                    parallelruns['OSTree Import: Compose Repo'] = {
+                        pipeutils.composeRepoImport(params.VERSION, basearch, s3_stream_dir)
+                    }
+                }
+                // process this batch
+                parallel parallelruns
+            }
+
+            if (!params.SKIP_TESTS) {
+                stage('Cloud Tests') {
+                    pipeutils.run_cloud_tests(pipecfg, params.STREAM, params.VERSION,
+                                              cosa_img, basearch, src_config_commit)
+                }
+                if (pipecfg.misc?.run_extended_upgrade_test_fcos) {
+                    stage('Upgrade Tests') {
+                        pipeutils.run_fcos_upgrade_tests(pipecfg, params.STREAM, params.VERSION,
+                                                         cosa_img, basearch, src_config_commit)
+                    }
+                }
             }
         }
 
@@ -150,5 +171,5 @@ lock(resource: "cloud-replicate-${params.VERSION}") {
     currentBuild.result = 'FAILURE'
     throw e
 } finally {
-    pipeutils.trySlackSend(message: ":cloud: :arrows_counterclockwise: cloud-replicate #${env.BUILD_NUMBER} <${env.BUILD_URL}|:jenkins:> <${env.RUN_DISPLAY_URL}|:ocean:> [${params.STREAM}][${basearches.join(' ')}] (${params.VERSION})")
+    pipeutils.trySlackSend(message: ":hammer: fix-build #${env.BUILD_NUMBER} <${env.BUILD_URL}|:jenkins:> <${env.RUN_DISPLAY_URL}|:ocean:> [${params.STREAM}][${basearches.join(' ')}] (${params.VERSION})")
 }}} // try-catch-finally, cosaPod and lock finish here

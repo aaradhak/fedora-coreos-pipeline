@@ -45,6 +45,9 @@ def s3_stream_dir = pipeutils.get_s3_streams_dir(pipecfg, params.STREAM)
 
 def stream_info = pipecfg.streams[params.STREAM]
 
+// Grab any environment variables we should set
+def container_env = pipeutils.get_env_vars_for_stream(pipecfg, params.STREAM)
+
 def getLockfileInfo(lockfile) {
     def pkgChecksum, pkgTimestamp
     if (utils.pathExists(lockfile)) {
@@ -61,12 +64,13 @@ def getLockfileInfo(lockfile) {
 // Keep in sync with build.Jenkinsfile
 def cosa_memory_request_mb = 10.5 * 1024 as Integer
 def ncpus = ((cosa_memory_request_mb - 512) / 1536) as Integer
+def timeout_mins = 240
 
-lock(resource: "bump-${params.STREAM}") {
-    cosaPod(image: cosa_img,
+lock(resource: "bump-lockfile") {
+    cosaPod(image: cosa_img, env: container_env,
             cpu: "${ncpus}", memory: "${cosa_memory_request_mb}Mi",
             serviceAccount: "jenkins") {
-    timeout(time: 120, unit: 'MINUTES') { 
+    timeout(time: timeout_mins, unit: 'MINUTES') {
     try {
 
         currentBuild.description = "[${params.STREAM}] Running"
@@ -106,9 +110,12 @@ lock(resource: "bump-${params.STREAM}") {
             parallel archinfo.keySet().collectEntries{arch -> [arch, {
                 if (arch != "x86_64") {
                     pipeutils.withPodmanRemoteArchBuilder(arch: arch) {
-                        archinfo[arch]['session'] = shwrapCapture("""
-                        cosa remote-session create --image ${cosa_img} --expiration 4h --workdir ${env.WORKSPACE}
-                        """)
+                        archinfo[arch]['session'] = pipeutils.makeCosaRemoteSession(
+                            env: container_env,
+                            expiration: "${timeout_mins}m",
+                            image: cosa_img,
+                            workdir: WORKSPACE,
+                        )
                         withEnv(["COREOS_ASSEMBLER_REMOTE_SESSION=${archinfo[arch]['session']}"]) {
                             shwrap("""
                             cosa init --branch ${branch} ${variant} --commit=${src_config_commit} https://github.com/${repo}
@@ -213,16 +220,19 @@ lock(resource: "bump-${params.STREAM}") {
                         }
                         def n = ncpus - 1 // remove 1 for upgrade test
                         kola(cosaDir: env.WORKSPACE, parallel: n, arch: arch,
-                             marker: arch, allowUpgradeFail: params.ALLOW_KOLA_UPGRADE_FAILURE)
+                             marker: arch, allowUpgradeFail: params.ALLOW_KOLA_UPGRADE_FAILURE,
+                             skipKolaTags: stream_info.skip_kola_tags)
                         stage("${arch}:Build Metal") {
                             shwrap("cosa buildextend-metal")
                             shwrap("cosa buildextend-metal4k")
                         }
                         stage("${arch}:Build Live") {
                             shwrap("cosa buildextend-live --fast")
-                            // Test metal4k with an uncompressed image and metal with a
-                            // compressed one
-                            shwrap("cosa compress --artifact=metal")
+                            // Test metal4k with an uncompressed image and
+                            // metal with a compressed one. Limit to 4G to be
+                            // good neighbours and reduce chances of getting
+                            // OOMkilled.
+                            shwrap("cosa shell -- env XZ_DEFAULTS=--memlimit=4G cosa compress --artifact=metal")
                         }
                         stage("${arch}:kola:testiso") {
                             kolaTestIso(cosaDir: env.WORKSPACE, arch: arch, marker: arch)

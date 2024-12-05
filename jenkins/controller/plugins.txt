@@ -12,7 +12,7 @@
 
 # The plugins we list here are in addition to the ones that are
 # delivered with the jenkins image delivered by OpenShift, which
-# are defined here [1] in bundle-plugins.txt. That list is a depsovled
+# are defined here [1] in bundle-plugins.txt. That list is a depsolved
 # version of the base-plugins.txt [2]. The relationship between these
 # two files is described here [3]. Note that the plugins/versions that
 # get pulled in OpenShift is from an OpenShift release and might not
@@ -21,16 +21,17 @@
 # [1] https://github.com/openshift/jenkins/blob/master/2/contrib/openshift/bundle-plugins.txt
 # [2] https://github.com/openshift/jenkins/blob/master/2/contrib/openshift/base-plugins.txt
 # [3] https://github.com/openshift/jenkins#plugin-installation-for-centos7-v410
-basic-branch-build-strategies:1.3.2
-generic-webhook-trigger:1.84.2
-github-oauth:0.39
-kubernetes-credentials-provider:1.199.v4a_1d1f5d074f
-pipeline-github:2.8-138.d766e30bb08b
-slack:625.va_eeb_b_168ffb_0
-timestamper:1.20
-splunk-devops-extend:1.9.9
-splunk-devops:1.9.9
+basic-branch-build-strategies:81.v05e333931c7d
+generic-webhook-trigger:2.0.1
+github-oauth:597.ve0c3480fcb_d0
+kubernetes-credentials-provider:1.262.v2670ef7ea_0c5
+pipeline-github:2.8-159.09e4403bc62f
+slack:684.v833089650554
+timestamper:1.27
+splunk-devops-extend:1.10.1
+splunk-devops:1.10.1
 antisamy-markup-formatter:162.v0e6ec0fcfcf6
+jms-messaging:1.1.27
 
 # The below list are plugins that are also in base-plugins.txt but for
 # some reason or other we need to temporarily freeze or fast-track.

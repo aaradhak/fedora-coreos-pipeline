@@ -37,9 +37,6 @@ hacks:
   # OPTIONAL: skip UEFI on older RHCOS
   skip_uefi_tests_on_older_rhcos: true
 
-# OPTIONAL/TEMPORARY: whether to use `versionary` to derive version numbers
-versionary_hack: true
-
 # OPTIONAL: coreos-assembler image to build with. Supports ${STREAM} variable.
 # If unset, defaults to `quay.io/coreos-assembler/coreos-assembler:main`.
 cosa_img: quay.io/jlebon/coreos-assembler:pr3139-${STREAM}
@@ -60,29 +57,27 @@ streams:
       source_config_ref: main
       # OPTIONAL: override OS variant to use for this stream
       variant: rhcos-9.0
+      # OPTIONAL: override whether to use a versionary for this stream
+      versionary: false
     stable:
       type: production
       # OPTIONAL: override cosa image to use for this stream
       cosa_image: "quay.io/jlebon/coreos-assembler:stable"
+      # OPTIONAL: additional artifacts to build for this stream
+      additional_artifacts:
+        aarch64:
+          - vmware
       # OPTIONAL: skip some of the default artifacts for this stream
       skip_artifacts:
         aarch64:
           - openstack
         x86_64:
           - vmware
-      # OPTIONAL: stream-specific container repos to push to
-      additional_registry_repos:
-        oscontainer_old:
-          repo: registry.ci.openshift.org/rhcos-devel/machine-os-oci-content
-        legacy_oscontainer_old:
-          repo: registry.ci.openshift.org/rhcos-devel/machine-os-content
       # OPTIONAL: override default coreos-assembler image to build with
       cosa_img: quay.io/coreos-assembler/coreos-assembler:stable
-      # OPTIONAL/TEMPORARY: Override default coreos-assembler image to use for
-      # the controller pod in the build-arch job. This is only useful when
-      # building with a cosa too old to support `cosa remote-session`, which
-      # should only be the case for RHCOS 4.11 and older.
-      cosa_controller_img_hack: quay.io/coreos-assembler/coreos-assembler:latest
+      # OPTIONAL: Override default coreos-assembler image to use for
+      # the controller pod in the build-arch job (default is :main)
+      cosa_controller_img: quay.io/coreos-assembler/coreos-assembler:next
       # OPTIONAL: override additional architectures to build for
       additional_arches:
         - s390x
@@ -91,15 +86,33 @@ streams:
       # OPTIONAL: additional architectures to skip building for
       skip_additional_arches:
         - s390x
-      # OPTIONAL/TEMPORARY: don't upload to govcloud even if cloud is
-      # configured. Can be dropped when RHCOS 4.9 (last release that doesn't
-      # support GovCloud) is EOL.
-      skip_govcloud_hack: true
       # OPTIONAL/TEMPORARY: don't upload images to clouds
       skip_cloud_uploads: true
+      # OPTIONAL: dont perform Brew uploads
+      skip_brew_upload: true
+      # Set the COSA_USE_OSBUILD environment variable to force use of OSBuild
+      # for image building.
+      env:
+        COSA_USE_OSBUILD: true
+      # OPTIONAL: require kernel + kernel-rt versions to match
+      check_kernel_rt_mismatch_rhcos: true
+      # OPTIONAL: list of kola tags to skip for this stream
+      skip_kola_tags: [openshift, needs-internet, luks]
+      # OPTIONAL: allow building using OSBuild for artifacts where OSBuild is
+      # not yet the default in CoreOS Assembler.
+      osbuild_experimental: true
+      # OPTIONAL: stream will be set as "scheduled"
+      # By default, `build-mechanical` builds all mechanical streams.
+      # When mechanical streams have `scheduled` on, then
+      # `build-mechanical` will only build those streams
+      scheduled: true
 
 # REQUIRED: architectures to build for other than x86_64
 additional_arches: [aarch64, ppc64le, s390x]
+
+# OPTIONAL: environment variables to set inside the COSA container
+env:
+  VAR: value
 
 # OPTIONAL: S3 bucket and key to which to upload build artifacts. For reference,
 # the builds.json file will be located at
@@ -130,16 +143,10 @@ registry_repos:
     # REQUIRED: list of tags to create/overwrite when pushing
     #           STREAM and VERSION are supported for templating
     tags: ["${STREAM}"]
-  # OPTIONAL/TEMPORARY: additional repo to which to push oscontainer
-  oscontainer_old:
-    repo: quay.io/coreos-assembler/fcos
   # OPTIONAL: repo and tags to which to push legacy oscontainer
   legacy_oscontainer:
     repo: quay.io/openshift-release-dev/rhel-coreos-dev
     tags: ["${STREAM}-legacy", "${VERSION}-legacy"]
-  # OPTIONAL/TEMPORARY: additional repo to which to push legacy oscontainer
-  legacy_oscontainer_old:
-    repo: registry.ci.openshift.org/rhcos/rhel-coreos
   # OPTIONAL: repo and tags to which to push the extensions container
   extensions:
     repo: quay.io/openshift-release-dev/rhel-coreos-extensions-dev
@@ -157,6 +164,9 @@ clouds:
     # OPTIONAL: accounts to share newly created AMIs with
     grant_users:
       - "1234567890"
+    # OPTIONAL: AWS tags to add on the AMIs
+    tags:
+      - "FedoraGroup=coreos"    
     # REQUIRED (if AWS build upload credentials provided): the region to do
     # initial image creation in.
     primary_region: us-east-1
@@ -258,9 +268,9 @@ clouds:
 
 # OPTIONAL: miscellaneous options
 misc:
+  # OPTIONAL: whether to use a versionary to derive version numbers
+  versionary: true
   # OPTIONAL: whether to generate a release index
   generate_release_index: true
-  # OPTIONAL: require kernel + kernel-rt versions to match
-  check_kernel_rt_mismatch_rhcos: true
   # OPTIONAL: whether to run extended upgrade test kola job
   run_extended_upgrade_test_fcos: true

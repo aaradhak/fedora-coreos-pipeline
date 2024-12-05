@@ -42,7 +42,7 @@ properties([
     parameters([
       string(name: 'ARCHES',
              description: 'Space-separated list of target architectures',
-             defaultValue: "x86_64",
+             defaultValue: "x86_64" + " " + pipeutils.get_supported_additional_arches().join(" "),
              trim: true),
       string(name: 'CONFIG_GIT_URL',
              description: 'Override the src/config git repo to use',
@@ -146,12 +146,16 @@ lock(resource: "build-${containername}") {
                     def arch = architecture
                     images += " --image=docker://${params.CONTAINER_REGISTRY_STAGING_REPO}:${arch}-${shortcommit}"
                 }
-                shwrap("""
-                export STORAGE_DRIVER=vfs # https://github.com/coreos/fedora-coreos-pipeline/issues/723#issuecomment-1297668507
-                cosa push-container-manifest \
-                    --auth=\$REGISTRY_SECRET --tag ${gitref} \
-                    --repo ${params.CONTAINER_REGISTRY_REPO} ${images}
-                """)
+                // arbitrarily selecting the x86_64 builder; we don't run this
+                // locally because podman wants user namespacing (yes, even just
+                // to push a manifest...)
+                pipeutils.withPodmanRemoteArchBuilder(arch: "x86_64") {
+                    shwrap("""
+                        cosa push-container-manifest \
+                            --auth=\$REGISTRY_SECRET --tag ${gitref} \
+                            --repo ${params.CONTAINER_REGISTRY_REPO} ${images}
+                    """)
+                }
             }
 
             stage('Delete Intermediate Tags') {
