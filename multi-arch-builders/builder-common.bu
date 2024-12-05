@@ -91,7 +91,7 @@ storage:
           [Service]
           Type=oneshot
           ExecStart=podman image prune --force
-          ExecStart=podman image prune --all --force --filter until=48h
+          ExecStart=podman image prune --all --external --force --filter until=48h
           ExecStart=podman container prune --force
           ExecStart=podman volume prune --force --filter="label!=persistent"
     - path: /home/builder/.config/systemd/user/prune-container-resources.timer
@@ -103,7 +103,8 @@ storage:
       contents:
         inline: |
             [Timer]
-            OnCalendar=*-*-* 05:00:00 UTC
+            OnCalendar=*-*-* 10:00:00 UTC
+            OnCalendar=*-*-* 22:00:00 UTC
             AccuracySec=30m
             Persistent=true
             [Install]

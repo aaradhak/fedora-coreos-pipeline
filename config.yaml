@@ -8,11 +8,16 @@ streams:
   testing-devel:
     type: development
     default: true
+    env:
+      COSA_TESTISO_DEBUG: true
   # next-devel:         # do not touch; line managed by `next-devel/manage.py`
     # type: development # do not touch; line managed by `next-devel/manage.py`
   rawhide:
     type: mechanical
-  #branched:
+    env:
+      COSA_TESTISO_DEBUG: true
+    osbuild_experimental: true
+  # branched:
   #  type: mechanical
   #  env:
   #    COSA_USE_OSBUILD: true
@@ -37,7 +42,7 @@ s3:
 registry_repos:
   oscontainer:
     repo: quay.io/fedora/fedora-coreos
-    tags: ["${STREAM}"]
+    tags: ["${STREAM}", "${VERSION}"]
   kubevirt:
     repo: quay.io/fedora/fedora-coreos-kubevirt
     tags: ["${STREAM}"]
@@ -48,7 +53,6 @@ default_artifacts:
     - metal4k
     - live
     - openstack
-    - hashlist-experimental
   aarch64:
     - applehv
     - aws

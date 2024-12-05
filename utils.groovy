@@ -8,9 +8,11 @@ import org.yaml.snakeyaml.Yaml
 PROTECTED_JENKINSES = [
     'https://jenkins-fedora-coreos-pipeline.apps.ocp.fedoraproject.org/':
         ['fcos-builds', 'prod/streams/${STREAM}', false],
-    'https://jenkins-rhcos-devel.apps.ocp-virt.prod.psi.redhat.com/':
+    'https://jenkins-rhcos--devel-pipeline.apps.int.preprod-stable-spoke1-dc-iad2.itup.redhat.com/':
         ['rhcos-ci', 'prod/streams/${STREAM}', true],
     'https://jenkins-rhcos.apps.ocp-virt.prod.psi.redhat.com/':
+        ['art-rhcos-ci', 'prod/streams/${STREAM}', true],
+    'https://jenkins-rhcos--prod-pipeline.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/':
         ['art-rhcos-ci', 'prod/streams/${STREAM}', true]
 ]
 
@@ -90,6 +92,21 @@ def validate_pipecfg(pipecfg, is_hotfix) {
         assert pipecfg.hotfix.name : "Hotfix missing 'name' member"
         assert pipecfg.hotfix.name =~ '^[a-zA-Z0-9-_]+$'
     }
+}
+
+def load_gc() {
+    def jenkinscfg = load_jenkins_config()
+    def url = jenkinscfg['pipecfg-url']
+    def gc_policy_data
+
+    if (url == 'in-tree') {
+        gc_policy_data = readYaml(file: "gc-policy.yaml")
+    } else {
+        // assume the user called `load_pipecfg()` in this workdir; if not, let error out
+        gc_policy_data = readYaml(file: "pipecfg/gc-policy.yaml")
+    }
+
+    return gc_policy_data
 }
 
 def add_hotfix_parameters_if_supported() {
@@ -200,7 +217,7 @@ def bump_builds_json(stream, buildid, arch, s3_stream_dir, acl) {
     // unlock
     //
     // XXX: should fold this into `cosa buildupload` somehow
-    lock(resource: "bump-builds-json-${stream}") {
+    lock(resource: "builds-json-${stream}") {
         def remotejson = "s3://${s3_stream_dir}/builds/builds.json"
         aws_s3_cp_allow_noent(remotejson, './remote-builds.json')
         shwrap("""
@@ -367,6 +384,12 @@ def streams_of_type(config, type) {
     return config.streams.findAll{k, v -> v.type == type}.collect{k, v -> k}
 }
 
+// Returns a list of stream names from `streams_subset` that have `scheduled: true` set
+def scheduled_streams(config, streams_subset) {
+    return streams_subset.findAll{stream ->
+        config.streams[stream].scheduled}.collect{k, v -> k}
+}
+
 def get_streams_choices(config) {
     def default_stream = config.streams.find{k, v -> v['default'] == true}?.key
     def other_streams = config.streams.keySet().minus(default_stream) as List
@@ -409,6 +432,42 @@ def build_artifacts(pipecfg, stream, basearch) {
 
     // First get the list of artifacts to build from the config
     def artifacts = get_artifacts_to_build(pipecfg, stream, basearch)
+
+    // If `cosa osbuild` is supported then let's build what we can using OSBuild
+    if (shwrapRc("cosa shell -- test -e /usr/lib/coreos-assembler/cmd-osbuild") == 0) {
+        // Determine which platforms are OSBuild experimental versus
+        // stable (i.e. the default is to use OSBuild for them).
+        def experimental = shwrapCapture("cosa osbuild --supported-platforms").tokenize()
+        def stable = shwrapCapture('''
+            cosa shell -- bash -c '
+                for buildextend in /usr/lib/coreos-assembler/cmd-buildextend-*; do
+                    if [ "$(readlink -f ${buildextend})" == "/usr/lib/coreos-assembler/cmd-osbuild" ]; then
+                        # the 42 here chops off /usr/lib/coreos-assembler/cmd-buildextend-
+                        echo "${buildextend:42}"
+                    fi
+                done
+            '
+        ''').tokenize('\n')
+        // Based on the pipeline configuration we'll either use OSBuild for as
+        // much as we can (experimental) or just what it is the default for (stable)
+        def osbuild_supported_artifacts = stable
+        if (pipecfg.streams[stream].osbuild_experimental) {
+            osbuild_supported_artifacts = experimental
+        }
+        // Let's build separately the artifacts that can be built directly with OSBuild.
+        def osbuild_artifacts = []
+        for (artifact in artifacts) {
+            if (artifact in osbuild_supported_artifacts) {
+                osbuild_artifacts += artifact
+            }
+        }
+        if (!osbuild_artifacts.isEmpty()) {
+            artifacts.removeAll(osbuild_artifacts)
+            stage('💽:OSBuild') {
+                shwrap("cosa osbuild ${osbuild_artifacts.join(' ')}")
+            }
+        }
+    }
 
     // Next let's do some massaging of the inputs based on two problems we
     // need to consider:
