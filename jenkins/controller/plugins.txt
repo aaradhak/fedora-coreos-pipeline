@@ -26,7 +26,7 @@ generic-webhook-trigger:2.0.1
 github-oauth:597.ve0c3480fcb_d0
 kubernetes-credentials-provider:1.262.v2670ef7ea_0c5
 pipeline-github:2.8-159.09e4403bc62f
-slack:711.v41060f587001
+slack:684.v833089650554
 timestamper:1.27
 splunk-devops-extend:1.10.2
 splunk-devops:1.10.2
