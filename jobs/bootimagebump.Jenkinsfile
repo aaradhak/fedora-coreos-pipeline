@@ -11,7 +11,6 @@ node {
             [$class: 'WipeWorkspace']]
     ]
 
-    // these are script global vars
     properties([
         pipelineTriggers([]),
         parameters([
@@ -58,13 +57,12 @@ node {
             """)
 
             stage('Setup workspace') {
-                echo " AR - Cloning openshift/installer repo"
                 shwrap("""
                         git clone --depth=1 --branch main https://github.com/${releng_installer}.git
                         cd installer
                         git remote -v
                         git remote add upstream https://github.com/openshift/installer.git
-                        retries=3
+                        retries=5
                         for i in \$(seq 1 \$retries); do
                             echo "Attempt \$i of \$retries to fetch upstream/${RELEASE_BRANCH}"
                             git fetch upstream ${RELEASE_BRANCH} && break || sleep 10
@@ -75,24 +73,23 @@ node {
             }
 
             stage('Bump Bootimage Metadata') {
-                echo "AR - Run plume cosa2stream to bump RHCOS bootimage metadata"
                 shwrap("""
-                cd installer
-                plume cosa2stream \
-                    --target ${RHCOS_METADATA_FILE} \
-                    --distro rhcos \
-                    --no-signatures \
-                    --name ${params.STREAM} \
-                    --url https://rhcos.mirror.openshift.com/art/storage/prod/streams \
-                    x86_64=${params.BUILD_VERSION} \
-                    aarch64=${params.BUILD_VERSION} \
-                    s390x=${params.BUILD_VERSION} \
-                    ppc64le=${params.BUILD_VERSION}
+                        cd installer
+                        plume cosa2stream \
+                            --target ${RHCOS_METADATA_FILE} \
+                            --distro rhcos \
+                            --no-signatures \
+                            --name ${params.STREAM} \
+                            --url https://rhcos.mirror.openshift.com/art/storage/prod/streams \
+                            x86_64=${params.BUILD_VERSION} \
+                            aarch64=${params.BUILD_VERSION} \
+                            s390x=${params.BUILD_VERSION} \
+                            ppc64le=${params.BUILD_VERSION}
                 """)
             }
 
             stage('Create Pull Request') {
-                if (shwrapCapture("git diff --exit-code") != 0){
+                //if (shwrapCapture("git diff --exit-code") != 0){
                         def message = "${params.BOOTIMAGE_BUG_ID}: Update RHCOS-${RELEASE_BRANCH} bootimage metadata to ${params.BUILD_VERSION}"
                         def commit_message = """\
                         ${params.BOOTIMAGE_BUG_ID}: Update RHCOS ${RELEASE_BRANCH} bootimage metadata to ${params.BUILD_VERSION}
@@ -111,24 +108,22 @@ node {
                             ppc64le=${params.BUILD_VERSION}
 
                         """.stripIndent()
-                        echo "AR - Create PR | rel - ${RELEASE_BRANCH}"
                         shwrap ("""
-                        cd installer
-                        git add ${RHCOS_METADATA_FILE}
-                        git commit -m '${commit_message}'
+                                cd installer
+                                git add ${RHCOS_METADATA_FILE}
+                                git commit -m '${commit_message}'
                         """)
-                        echo "git Committed"
+
                         withCredentials([usernamePassword(credentialsId: botCreds,
                                                       usernameVariable: 'GHUSER',
                                                       passwordVariable: 'GHTOKEN')]) {
-                            echo "AR - Push begin"
                             shwrap("""
                                     cd installer
                                     git push -f https://\${GHUSER}:\${GHTOKEN}@github.com/${releng_installer} ${PR_BRANCH}
                                     curl -H "Authorization: token ${GHTOKEN}" -X POST -d '{ "title": "${message}", "head": "coreosbot-releng:${PR_BRANCH}", "base": "${RELEASE_BRANCH}" }' https://api.github.com/repos/openshift/installer/pulls --fail
                             """)
                         }
-                }
+                //}
             currentBuild.result = 'SUCCESS'
             }
         } catch (e) {
