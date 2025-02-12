@@ -66,6 +66,7 @@ node {
                         for i in \$(seq 1 \$retries); do
                             echo "Attempt \$i of \$retries to fetch upstream/${RELEASE_BRANCH}"
                             git fetch upstream ${RELEASE_BRANCH} && break || sleep 10
+                        done
                         git checkout -b ${PR_BRANCH} upstream/${RELEASE_BRANCH}
                         git remote -v
                 """)
