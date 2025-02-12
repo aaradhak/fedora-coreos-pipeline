@@ -55,7 +55,7 @@ node {
                 git config --global user.name "CoreOS Bot"
                 git config --global user.email "coreosbot-releng@fedoraproject.org"
             """)
-
+            // Clone the openshift/installer repository and fetch the required release branch
             stage('Setup workspace') {
                 shwrap("""
                         git clone --depth=1 --branch main https://github.com/${releng_installer}.git
@@ -72,6 +72,7 @@ node {
                 """)
             }
 
+            // Run plume cosa2stream to update the RHCOS bootimage metadata (rhcos.json)
             stage('Bump Bootimage Metadata') {
                 shwrap("""
                         cd installer
@@ -87,7 +88,7 @@ node {
                             ppc64le=${params.BUILD_VERSION}
                 """)
             }
-
+            // Commit the updated metadata.
             stage('Create Pull Request') {
                 //if (shwrapCapture("git diff --exit-code") != 0){
                         def message = "${params.BOOTIMAGE_BUG_ID}: Update RHCOS-${RELEASE_BRANCH} bootimage metadata to ${params.BUILD_VERSION}"
