@@ -62,7 +62,10 @@ node {
                         cd installer
                         git remote -v
                         git remote add upstream https://github.com/openshift/installer.git
-                        git fetch upstream release-${RELEASE_BRANCH} --timeout=300
+                        retries=3
+                        for i in \$(seq 1 \$retries); do
+                            echo "Attempt \$i of \$retries to fetch upstream/${RELEASE_BRANCH}"
+                            git fetch upstream ${RELEASE_BRANCH} && break || sleep 10
                         git checkout -b ${PR_BRANCH} upstream/${RELEASE_BRANCH}
                         git remote -v
                 """)
