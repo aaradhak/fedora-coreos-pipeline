@@ -21,7 +21,7 @@
 # [1] https://github.com/openshift/jenkins/blob/master/2/contrib/openshift/bundle-plugins.txt
 # [2] https://github.com/openshift/jenkins/blob/master/2/contrib/openshift/base-plugins.txt
 # [3] https://github.com/openshift/jenkins#plugin-installation-for-centos7-v410
-basic-branch-build-strategies:228.v68c089762a_db_
+basic-branch-build-strategies:190.v343a_ee70d920
 generic-webhook-trigger:2.3.1
 github-oauth:621.v33b_4394dda_4d
 kubernetes-credentials-provider:1.273.v15e69b_55ea_8e
