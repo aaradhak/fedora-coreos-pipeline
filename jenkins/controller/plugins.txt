@@ -27,6 +27,7 @@ github-oauth:621.v33b_4394dda_4d
 kubernetes-credentials-provider:1.273.v15e69b_55ea_8e
 pipeline-github:2.8-159.09e4403bc62f
 slack:761.v2a_8770f0d169
+apache-httpcomponents-client-5-api:5.4-124.v31e2987e48f4
 timestamper:1.28
 splunk-devops-extend:1.10.2
 splunk-devops:1.10.2
@@ -35,4 +36,9 @@ jms-messaging:1.1.28
 
 # The below list are plugins that are also in base-plugins.txt but for
 # some reason or other we need to temporarily freeze or fast-track.
-#
+# - Fast-track branch-api for updated basic-branch-build-strategies
+# - Fast-track json-path-api for updated generic-webhook-trigger
+# - Fast-track gson-api for updated generic-webhook-trigger
+branch-api:2.1214.v3f652804588d
+json-path-api:2.9.0-138.vc943da_d833b_6
+gson-api:2.11.0-109.v1ef91dd0829a_
