@@ -10,6 +10,10 @@ ignition:
   config:
     merge:
       - local: builder-common.ign
+kernel_arguments:
+  should_exist:
+    # Required for CEX LUKS support in initramfs
+    - rd.luks.key=/etc/luks/cex.key
 passwd:
   users:
     - name: builder
