@@ -21,11 +21,6 @@ streams:
 
 additional_arches: [aarch64, ppc64le, s390x]
 
-# Environment variables for kola testing
-env:
-  # CEX UUID for s390x LUKS testing
-  KOLA_CEX_UUID: "68cd2d83-3eef-4e45-b22c-534f90b16cb9"
-
 source_config:
   url: https://github.com/coreos/fedora-coreos-config
 
