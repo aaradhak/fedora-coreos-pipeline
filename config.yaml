@@ -8,6 +8,8 @@ streams:
   testing-devel:
     type: development
     default: true
+    source_config_url: https://github.com/aaradhak/rhel-coreos-config
+    source_config_ref: azure-vm-utils
   # next-devel:         # do not touch; line managed by `next-devel/manage.py`
     # type: development # do not touch; line managed by `next-devel/manage.py`
   rawhide:
