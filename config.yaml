@@ -1,9 +1,6 @@
 hotfix:
   name: azure-testing
 
-hacks:
-  skip_upgrade_tests: true
-
 streams:
   stable:
     type: production
