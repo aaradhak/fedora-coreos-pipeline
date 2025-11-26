@@ -15,6 +15,10 @@ streams:
   rawhide:
     type: development
     konflux_driven: true
+  rhel-10.1:
+    type: development
+    source_config_url: https://github.com/aaradhak/rhel-coreos-config
+    source_config_ref: azure-vm-utils
   #branched:
   #  type: development
 
