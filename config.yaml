@@ -20,6 +20,7 @@ streams:
     konflux_driven: true
   rhel-10.1:
     type: development
+    variant: rhel-10.1
     source_config_url: https://github.com/aaradhak/rhel-coreos-config
     source_config_ref: azure-vm-utils
   #branched:
@@ -29,6 +30,7 @@ additional_arches: [aarch64, ppc64le, s390x]
 
 source_config:
   url: https://github.com/coreos/fedora-coreos-config
+  yumrepos: https://gitlab.cee.redhat.com/coreos/redhat-coreos.git
 
 s3:
   bucket: rhcos-ci
