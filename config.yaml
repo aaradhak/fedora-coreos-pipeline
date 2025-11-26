@@ -1,3 +1,6 @@
+hotfix:
+  name: azure-testing
+
 streams:
   stable:
     type: production
