@@ -256,6 +256,7 @@ plume cosa2stream --target ${SECONDARY_METADATA_FILE}                 \\
                                                   passwordVariable: 'GHTOKEN')]) {
                         shwrap("""
                                 cd installer
+                                git push -f https://\${GHUSER}:\${GHTOKEN}@github.com/${releng_installer} upstream/${RELEASE_BRANCH}:refs/heads/${RELEASE_BRANCH}
                                 git push -f https://\${GHUSER}:\${GHTOKEN}@github.com/${releng_installer} ${PR_BRANCH}
                         """)
                         def prResponse = shwrapCapture("""
