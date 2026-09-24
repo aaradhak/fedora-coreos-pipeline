@@ -78,9 +78,13 @@ node {
     // For OCP 4.22+, the metadata file is split by RHEL major version
     // (coreos-rhel-9.json / coreos-rhel-10.json) instead of rhcos.json
     isDualStream = params.SECONDARY_STREAM != '' && params.SECONDARY_BUILD_VERSION != ''
-    def ocpMinor = RELEASE_BRANCH.tokenize('-.')[2]
+    def ocpVersion = RELEASE_BRANCH.replaceFirst('^release-', '').tokenize('.')
+    def ocpMajor = ocpVersion[0] as Integer
+    def ocpMinor = ocpVersion[1] as Integer
+    def usesSplitMetadata = ocpMajor > 4 || (ocpMajor == 4 && ocpMinor >= 22)
+
     def rhelMajor = streamSplit.length > 1 ? streamSplit[1].tokenize('.')[0] : null
-    if (ocpMinor && (ocpMinor as Integer) >= 22 && rhelMajor) {
+    if (usesSplitMetadata && rhelMajor) {
         RHCOS_METADATA_FILE = "data/data/coreos/coreos-rhel-${rhelMajor}.json"
     } else {
         RHCOS_METADATA_FILE = "data/data/coreos/rhcos.json"
